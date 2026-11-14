@@ -10,7 +10,9 @@ import {
   TE_ROSTER_POOL,
   ALL_PLAYERS_BY_ID,
   DIRTY_TRICKS,
-  DEATH_TEMPLATES
+  DEATH_TEMPLATES,
+  LEGACY_UPGRADES,
+  LEGACY_EARNING_RATES
 } from './data.js';
 import { createRng } from './rng.js';
 
@@ -37,12 +39,36 @@ export function createUnit(templateOrId, overrides = {}) {
     );
   }
 
+  const side = overrides.side || baseTemplate.side || 'player';
   const stars = overrides.stars || baseTemplate.stars || 1;
   const starMult = STAR_MULTIPLIERS[stars] || 1.0;
   const steroidSlushie = Boolean(overrides.steroidSlushie ?? baseTemplate.steroidSlushie);
   const slushieMult = steroidSlushie ? DIRTY_TRICKS.steroid_slushie.statMult : 1.0;
 
-  const rawHp = posDef.baseHp * speciesDef.passive.hpMult * starMult * slushieMult;
+  // §15 Thick Skulls: +5% max HP per rank for player units, applied after star scaling at unit creation
+  const thickSkullsRank =
+    side === 'player'
+      ? Math.max(
+          0,
+          Number(
+            overrides.thickSkullsRank ??
+              overrides.thick_skulls ??
+              overrides.upgrades?.thick_skulls ??
+              overrides.legacyUpgrades?.thick_skulls ??
+              baseTemplate.thickSkullsRank ??
+              0
+          )
+        )
+      : 0;
+  const postStarBaseHp = Math.max(
+    1,
+    Math.round(posDef.baseHp * speciesDef.passive.hpMult * starMult)
+  );
+  const thickSkullsMult =
+    1 + thickSkullsRank * LEGACY_UPGRADES.thick_skulls.hpBonusPctPerRank;
+  const postLegacyHp = Math.max(1, Math.round(postStarBaseHp * thickSkullsMult));
+
+  const rawHp = postLegacyHp * slushieMult;
   const rawDmg = posDef.baseDmg * speciesDef.passive.dmgMult * starMult * slushieMult;
 
   const maxHp = overrides.maxHp ?? Math.max(1, Math.round(rawHp));
@@ -67,7 +93,7 @@ export function createUnit(templateOrId, overrides = {}) {
     species: speciesDef.id,
     position: posDef.id,
     tier: baseTemplate.tier || 1,
-    cost: baseTemplate.cost || 1,
+    cost: overrides.cost ?? baseTemplate.cost ?? 1,
     stars,
     maxHp,
     baseMaxHp: maxHp,
@@ -81,11 +107,12 @@ export function createUnit(templateOrId, overrides = {}) {
     dodge,
     poisonImmune: Boolean(speciesDef.passive.poisonImmune),
     poisonOnHit: speciesDef.passive.poisonOnHit || 0,
-    side: overrides.side || baseTemplate.side || 'player',
+    side,
     row: overrides.row ?? baseTemplate.row ?? 0,
     col: overrides.col ?? baseTemplate.col ?? 0,
     alive: hp > 0,
     steroidSlushie,
+    thickSkullsRank,
     poisonStacks: []
   };
 }
@@ -121,13 +148,21 @@ export function combineStars(roster) {
           const fieldedCopy = trio.find((u) => u.fielded || (u.row !== undefined && u.row !== null));
           const newStars = targetStar + 1;
 
-          const upgraded = createUnit(primary, {
+          const tplRef = ALL_PLAYERS_BY_ID[primary.templateId || primary.id] || {
+            ...primary,
+            maxHp: undefined,
+            hp: undefined,
+            dmg: undefined
+          };
+          const upgraded = createUnit(tplRef, {
             uid: primary.uid,
+            name: primary.name,
             stars: newStars,
             side: primary.side,
             row: fieldedCopy ? fieldedCopy.row : primary.row,
             col: fieldedCopy ? fieldedCopy.col : primary.col,
-            steroidSlushie: trio.some((u) => u.steroidSlushie)
+            steroidSlushie: trio.some((u) => u.steroidSlushie),
+            thickSkullsRank: Math.max(...trio.map((u) => u.thickSkullsRank || 0))
           });
           upgraded.fielded = trio.some((u) => u.fielded);
 
@@ -642,6 +677,7 @@ export function simulateDrive(state, rngSeed = 1) {
       species: victim.species,
       position: victim.position,
       stars: victim.stars || 1,
+      thickSkullsRank: victim.thickSkullsRank || 0,
       side: victim.side,
       game: state.gameNumber || 1,
       down: downNum,
@@ -1671,6 +1707,46 @@ export function computeOpponentPoints(driveYards, driveOutcome = 'TURNOVER') {
 }
 
 /**
+ * Compute Legacy Gold earned at run end (Spec §15):
+ * Legacy earned = unspent run gold (1:1) + 5 per game won + 1 per total kill.
+ * Supports either object `{ unspentGold, wins, kills }` or positional `(unspentGold, wins, kills)`.
+ */
+export function computeLegacyEarned(arg1 = 0, winsArg = 0, killsArg = 0) {
+  const isObj = typeof arg1 === 'object' && arg1 !== null;
+  const rawGold = isObj ? (arg1.unspentGold ?? arg1.gold ?? 0) : arg1;
+  const rawWins = isObj ? (arg1.wins ?? 0) : winsArg;
+  const rawKills = isObj ? (arg1.kills ?? arg1.totalKills ?? 0) : killsArg;
+
+  const unspentGold = Math.max(0, Math.floor(rawGold));
+  const wins = Math.max(0, Math.floor(rawWins));
+  const kills = Math.max(0, Math.floor(rawKills));
+
+  const unspentBonus = unspentGold * LEGACY_EARNING_RATES.perUnspentGold;
+  const winsBonus = wins * LEGACY_EARNING_RATES.perWin;
+  const killsBonus = kills * LEGACY_EARNING_RATES.perKill;
+  const total = unspentBonus + winsBonus + killsBonus;
+
+  if (!isObj) {
+    return total;
+  }
+
+  return {
+    unspentGold,
+    wins,
+    kills,
+    unspentBonus,
+    winBonus: winsBonus,
+    winsBonus,
+    killBonus: killsBonus,
+    killsBonus,
+    total,
+    valueOf() {
+      return total;
+    }
+  };
+}
+
+/**
  * Post-Game Permadeath & Exceptions Resolver (Spec §1.2, §7, §8):
  * - Removes dead players permanently from the roster.
  * - Skeleton Reassemble (Synergy 2 = 30%, Synergy 4 = 60%): rolls AT MOST ONCE per dead Skeleton trigger
@@ -1736,7 +1812,8 @@ export function resolvePostGamePermadeath({
           uid: death.uid,
           name: death.name,
           stars: death.stars || 1,
-          side: 'player'
+          side: 'player',
+          thickSkullsRank: death.thickSkullsRank || 0
         });
         revivedUnit.fielded = false; // Returns to bench
         revivedUnit.reassembled = true;

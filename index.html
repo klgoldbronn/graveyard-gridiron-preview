@@ -28,6 +28,7 @@
         <span id="hud-hearts" class="stat-pill">❤️❤️❤️</span>
         <button id="mute-btn" type="button" class="hud-btn" title="Toggle WebAudio SFX">🔊</button>
         <button id="open-shop-btn" type="button" class="hud-btn">🛒 SHOP</button>
+        <button id="open-legacy-btn" type="button" class="hud-btn legacy-btn" title="Legacy Gold Meta-Upgrades">⚰️ LEGACY (<span id="hud-legacy-gold">0</span>)</button>
         <button id="reset-run-btn" type="button" class="hud-btn danger-btn" title="Hard Reset Run">↺</button>
       </div>
     </header>
@@ -87,7 +88,7 @@
       <div id="combine-banner" class="combine-banner hidden"></div>
 
       <div class="shop-Section-title">
-        <span>5-Card Draft Pool (Includes TE • 3x = Auto ★★)</span>
+        <span>5-Card Draft Pool (Includes 1g ROOKIE • 3x = Auto ★★)</span>
         <div style="display: flex; gap: 6px;">
           <button id="shop-autodraft-btn" type="button" class="hud-btn">⚡ Auto-Buy</button>
           <button id="shop-reroll-btn" type="button" class="hud-btn">🎲 Reroll (2g)</button>
@@ -135,15 +136,41 @@
       </button>
     </section>
 
-    <!-- Modal 4: Graveyard Cup Victory / Run Summary Screen (Game 8 Win, 3 Losses, or Full Roster+Gold Wipe) -->
+    <!-- Modal 4: Graveyard Cup Victory / Run Summary Screen (Game 8 Win, 3 Losses, or Massacre Wipe) -->
     <section id="run-summary-modal" class="modal-overlay hidden" aria-label="Run Summary">
       <div class="modal-header">
         <div id="run-summary-title" class="modal-title">🏆 GRAVEYARD CUP — RUN SUMMARY</div>
       </div>
       <div id="run-summary-content"></div>
+      <button id="summary-open-legacy-btn" type="button" class="primary-modal-btn legacy-modal-cta">
+        ⚰️ LEGACY UPGRADES (SPEND LEGACY GOLD)
+      </button>
       <button id="new-run-btn" type="button" class="primary-modal-btn">
         🔄 START NEW GAUNTLET RUN (10g)
       </button>
+    </section>
+
+    <!-- Modal 5: Legacy Gold Meta-Progression Modal (Spec §15) -->
+    <section id="legacy-modal" class="modal-overlay hidden" aria-label="Legacy Gold Upgrades">
+      <div class="modal-header">
+        <div class="modal-title">⚰️ LEGACY MAUSOLEUM</div>
+        <div style="display: flex; align-items: center; gap: 6px;">
+          <span id="legacy-bank-display" class="stat-pill">⚰️ 0 Legacy</span>
+          <button id="close-legacy-btn" type="button" class="hud-btn">✕ CLOSE</button>
+        </div>
+      </div>
+
+      <div class="result-summary-card" style="text-align: left; padding: 8px 10px; font-size: 11px;">
+        Permanent meta-upgrades bought with <strong>Legacy Gold</strong> (banked every run end: <strong>1× unspent gold + 5× wins + 1× kills</strong>). Instant &amp; permanent across runs.
+      </div>
+
+      <div id="legacy-upgrades-grid" class="shop-cards-grid"></div>
+
+      <div class="legacy-footer-row">
+        <button id="reset-legacy-btn" type="button" class="reset-legacy-small-btn">
+          Reset Legacy
+        </button>
+      </div>
     </section>
   </div>
 

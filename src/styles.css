@@ -982,3 +982,68 @@ body {
   margin-bottom: 8px;
   text-align: center;
 }
+
+/* v1.1 Legacy Gold & Rookie Slot Styles (§10, §15) */
+.hud-btn.legacy-btn {
+  background: #35165c;
+  color: var(--neon-yellow);
+  border-color: var(--neon-yellow);
+}
+
+.rookie-badge {
+  background: var(--neon-green);
+  color: #081c00;
+  font-size: 9px;
+  font-weight: 900;
+  padding: 1px 5px;
+  border-radius: 4px;
+  border: 1px solid #fff;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+}
+
+.shop-card.rookie-card {
+  border-color: var(--neon-green);
+  background: linear-gradient(90deg, #1b2e19 0%, #210e38 100%);
+}
+
+.legacy-modal-cta {
+  background: linear-gradient(180deg, #ffeb3b 0%, #d4a000 100%);
+  color: #1b0b2e;
+}
+
+.legacy-rank-pill {
+  background: #0d041a;
+  color: var(--neon-yellow);
+  border: 1px solid var(--neon-yellow);
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.legacy-footer-row {
+  margin-top: 14px;
+  padding-top: 8px;
+  border-top: 1px dashed rgba(255, 255, 255, 0.2);
+  display: flex;
+  justify-content: center;
+}
+
+.reset-legacy-small-btn {
+  background: transparent;
+  color: #b89fd4;
+  border: 1px solid rgba(184, 159, 212, 0.4);
+  border-radius: 4px;
+  padding: 3px 8px;
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.reset-legacy-small-btn:hover {
+  color: #fff;
+  border-color: var(--cartoon-red);
+  background: rgba(255, 23, 68, 0.25);
+}
+

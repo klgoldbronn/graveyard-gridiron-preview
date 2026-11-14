@@ -1,4 +1,4 @@
-// Graveyard Gridiron v1 — Full UI, Gauntlet, Dirty Tricks, Persistence & WebAudio Controller (Build 3)
+// Graveyard Gridiron v1.1 — Full UI, Gauntlet, Dirty Tricks, Legacy Meta-Progression & WebAudio Controller
 // Pure vanilla JS ES module, no framework, no build step, no external assets.
 
 import {
@@ -9,17 +9,63 @@ import {
   SHOP_POOL,
   DIRTY_TRICKS,
   COACHES,
-  RUN_STORAGE_KEY
+  RUN_STORAGE_KEY,
+  META_STORAGE_KEY,
+  ECONOMY_CONFIG,
+  LEGACY_EARNING_RATES,
+  LEGACY_UPGRADES
 } from './data.js';
 import {
   createUnit,
   combineStars,
   computeSynergies,
   simulateDrive,
+  computeLegacyEarned,
   resolvePostGamePermadeath,
   promoteBenchToField
 } from './sim.js';
 import { createRng } from './rng.js';
+
+// In-memory localStorage fallback for plain Node tests
+const memoryStorage = new Map();
+const fallbackLocalStorage = {
+  getItem(key) {
+    return memoryStorage.has(key) ? memoryStorage.get(key) : null;
+  },
+  setItem(key, value) {
+    memoryStorage.set(key, String(value));
+  },
+  removeItem(key) {
+    memoryStorage.delete(key);
+  },
+  clear() {
+    memoryStorage.clear();
+  }
+};
+
+if (typeof globalThis.localStorage === 'undefined') {
+  globalThis.localStorage = fallbackLocalStorage;
+}
+
+function getStorage() {
+  if (typeof window !== 'undefined' && window.localStorage) {
+    return window.localStorage;
+  }
+  return globalThis.localStorage || fallbackLocalStorage;
+}
+
+export function createDefaultMetaState() {
+  const upgrades = {};
+  for (const key of Object.keys(LEGACY_UPGRADES)) {
+    upgrades[key] = 0;
+  }
+  return {
+    legacyGold: 0,
+    upgrades
+  };
+}
+
+export { computeLegacyEarned };
 
 const SPECIES_SPLAT_ICON = {
   Skeleton: '🦴💥',
@@ -46,7 +92,7 @@ class SoundBleeper {
   }
 
   ensureContext() {
-    if (this.muted) return null;
+    if (this.muted || typeof window === 'undefined') return null;
     const AudioCtx = window.AudioContext || window.webkitAudioContext;
     if (!AudioCtx) return null;
     if (!this.ctx) {
@@ -173,17 +219,26 @@ export class GraveyardGridironUI {
     this.sfx = new SoundBleeper();
     this.rng = createRng(20261113);
     this.seedCounter = 1001;
+    this.els = null;
+
+    // Meta-Progression state (§15 — persisted separately under META_STORAGE_KEY)
+    this.meta = createDefaultMetaState();
+    this.loadMetaFromStorage();
 
     // Run & Game state
     this.gameNumber = 1; // 1..8
-    this.gold = 10;
-    this.teamHearts = 3;
+    this.gold = this.getRunStartingGold();
+    this.teamHearts = this.getRunStartingHearts();
     this.fieldRoster = [];
     this.benchRoster = [];
     this.shopSlots = [];
     this.heldTricks = []; // max 3: array of { uid, id, armed }
     this.gameResurrectionInsuranceArmed = false;
     this.atShopBoundary = false;
+    this.runEnded = false;
+    this.runEndReason = null;
+    this.legacyBankedForCurrentRun = false;
+    this.lastLegacyEarned = null;
 
     // Run cumulative stats for Run Summary (§3 & Build 3)
     this.runStats = {
@@ -223,7 +278,7 @@ export class GraveyardGridironUI {
         this.startNewRun(false);
       }
     } else {
-      this.generateOpponentRoster();
+      this.startNewRun(false);
     }
   }
 
@@ -236,6 +291,8 @@ export class GraveyardGridironUI {
       goldDisplay: document.getElementById('hud-gold'),
       heartsDisplay: document.getElementById('hud-hearts'),
       muteBtn: document.getElementById('mute-btn'),
+      openLegacyBtn: document.getElementById('open-legacy-btn'),
+      hudLegacyGold: document.getElementById('hud-legacy-gold'),
       openShopBtn: document.getElementById('open-shop-btn'),
       resetRunBtn: document.getElementById('reset-run-btn'),
       benchSlotsRow: document.getElementById('bench-slots-row'),
@@ -276,12 +333,44 @@ export class GraveyardGridironUI {
       runSummaryModal: document.getElementById('run-summary-modal'),
       runSummaryTitle: document.getElementById('run-summary-title'),
       runSummaryContent: document.getElementById('run-summary-content'),
-      newRunBtn: document.getElementById('new-run-btn')
+      summaryOpenLegacyBtn: document.getElementById('summary-open-legacy-btn'),
+      newRunBtn: document.getElementById('new-run-btn'),
+
+      legacyModal: document.getElementById('legacy-modal'),
+      legacyBankDisplay: document.getElementById('legacy-bank-display'),
+      closeLegacyBtn: document.getElementById('close-legacy-btn'),
+      legacyUpgradesGrid: document.getElementById('legacy-upgrades-grid'),
+      resetLegacyBtn: document.getElementById('reset-legacy-btn')
     };
 
     this.els.muteBtn.addEventListener('click', () => {
       this.toggleMute();
     });
+
+    if (this.els.openLegacyBtn) {
+      this.els.openLegacyBtn.addEventListener('click', () => {
+        if (this.isReplaying) return;
+        this.openLegacyModal();
+      });
+    }
+
+    if (this.els.closeLegacyBtn) {
+      this.els.closeLegacyBtn.addEventListener('click', () => {
+        this.closeLegacyModal();
+      });
+    }
+
+    if (this.els.summaryOpenLegacyBtn) {
+      this.els.summaryOpenLegacyBtn.addEventListener('click', () => {
+        this.openLegacyModal();
+      });
+    }
+
+    if (this.els.resetLegacyBtn) {
+      this.els.resetLegacyBtn.addEventListener('click', () => {
+        this.resetLegacyMeta(false);
+      });
+    }
 
     this.els.openShopBtn.addEventListener('click', () => {
       if (this.isReplaying) return;
@@ -335,7 +424,9 @@ export class GraveyardGridironUI {
 
   toggleMute() {
     this.sfx.muted = !this.sfx.muted;
-    this.els.muteBtn.textContent = this.sfx.muted ? '🔇' : '🔊';
+    if (this.els?.muteBtn) {
+      this.els.muteBtn.textContent = this.sfx.muted ? '🔇' : '🔊';
+    }
     if (!this.sfx.muted) {
       this.sfx.play('buy');
     }
@@ -348,6 +439,168 @@ export class GraveyardGridironUI {
 
   getCurrentCoach() {
     return COACHES[Math.min(COACHES.length - 1, this.gameNumber - 1)];
+  }
+
+  /**
+   * Meta-Progression persistence under 'graveyard-gridiron-meta-v1' (Spec §15)
+   */
+  loadMetaFromStorage() {
+    const defaults = createDefaultMetaState();
+    try {
+      const raw = getStorage().getItem(META_STORAGE_KEY);
+      if (!raw) {
+        this.meta = defaults;
+        this.saveMetaToStorage();
+        return false;
+      }
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== 'object') {
+        this.meta = defaults;
+        this.saveMetaToStorage();
+        return false;
+      }
+      const upgrades = { ...defaults.upgrades };
+      if (parsed.upgrades && typeof parsed.upgrades === 'object') {
+        for (const key of Object.keys(LEGACY_UPGRADES)) {
+          const maxRank = LEGACY_UPGRADES[key].maxRank;
+          const rankVal = Math.max(0, Math.min(maxRank, Math.floor(Number(parsed.upgrades[key] || 0))));
+          upgrades[key] = Number.isFinite(rankVal) ? rankVal : 0;
+        }
+      }
+      const legacyGold = Math.max(0, Math.floor(Number(parsed.legacyGold || 0)));
+      this.meta = {
+        legacyGold: Number.isFinite(legacyGold) ? legacyGold : 0,
+        upgrades
+      };
+      return true;
+    } catch {
+      this.meta = defaults;
+      return false;
+    }
+  }
+
+  saveMetaToStorage() {
+    try {
+      const payload = {
+        legacyGold: Math.max(0, Math.floor(Number(this.meta?.legacyGold || 0))),
+        upgrades: {
+          ...createDefaultMetaState().upgrades,
+          ...(this.meta?.upgrades || {})
+        }
+      };
+      getStorage().setItem(META_STORAGE_KEY, JSON.stringify(payload));
+    } catch {
+      // Ignore storage quota errors
+    }
+  }
+
+  getUpgradeRank(upgradeId) {
+    const def = LEGACY_UPGRADES[upgradeId];
+    if (!def) return 0;
+    const raw = Number(this.meta?.upgrades?.[upgradeId] || 0);
+    return Math.max(0, Math.min(def.maxRank, raw));
+  }
+
+  getNextUpgradePrice(upgradeId) {
+    const def = LEGACY_UPGRADES[upgradeId];
+    if (!def) return null;
+    const rank = this.getUpgradeRank(upgradeId);
+    if (rank >= def.maxRank) return null;
+    return def.prices[rank];
+  }
+
+  getRunStartingGold() {
+    const rank = this.getUpgradeRank('deep_pockets');
+    return ECONOMY_CONFIG.startGold + rank * LEGACY_UPGRADES.deep_pockets.bonusGoldPerRank;
+  }
+
+  getRunStartingHearts() {
+    const rank = this.getUpgradeRank('extra_heart');
+    return (FIELD_CONFIG.startingHearts || 3) + rank * LEGACY_UPGRADES.extra_heart.bonusHeartsPerRank;
+  }
+
+  getShopMaxTier() {
+    const scoutRank = this.getUpgradeRank('early_scouting');
+    const offset = scoutRank * (LEGACY_UPGRADES.early_scouting.gameTierOffset || 1);
+    const effectiveGame = this.gameNumber + offset;
+    const rawTier = effectiveGame <= 2 ? 1 : effectiveGame <= 5 ? 2 : 3;
+    return Math.min(LEGACY_UPGRADES.early_scouting.maxTierCap || 3, rawTier);
+  }
+
+  getTrickCost(trickId) {
+    const trickDef = DIRTY_TRICKS[trickId];
+    if (!trickDef) return 99;
+    if (trickId === 'resurrection_insurance' && this.getUpgradeRank('cut_rate_insurance') > 0) {
+      return LEGACY_UPGRADES.cut_rate_insurance.discountedInsuranceCost;
+    }
+    return trickDef.cost;
+  }
+
+  buyLegacyUpgrade(upgradeId) {
+    const def = LEGACY_UPGRADES[upgradeId];
+    if (!def) return false;
+    const rank = this.getUpgradeRank(upgradeId);
+    if (rank >= def.maxRank) return false;
+    const price = def.prices[rank];
+    if (this.meta.legacyGold < price) return false;
+
+    this.meta.legacyGold -= price;
+    this.meta.upgrades[upgradeId] = rank + 1;
+    this.saveMetaToStorage();
+    this.sfx.play('buy');
+    this.renderHud();
+    this.renderLegacyModal();
+    if (this.els && !this.els.shopModal.classList.contains('hidden')) {
+      this.renderShopModal();
+    }
+    return true;
+  }
+
+  resetLegacyMeta(skipConfirm = false) {
+    if (!skipConfirm && typeof window !== 'undefined' && typeof window.confirm === 'function') {
+      const confirmed = window.confirm(
+        'Reset ALL Legacy Gold and permanent Legacy upgrades? This cannot be undone.'
+      );
+      if (!confirmed) return false;
+    }
+    try {
+      getStorage().removeItem(META_STORAGE_KEY);
+    } catch {
+      // Ignore
+    }
+    this.meta = createDefaultMetaState();
+    this.saveMetaToStorage();
+    this.renderHud();
+    this.renderLegacyModal();
+    if (this.els && !this.els.shopModal.classList.contains('hidden')) {
+      this.renderShopModal();
+    }
+    return true;
+  }
+
+  /**
+   * Bank Legacy Gold at run end (Spec §15):
+   * Legacy earned = unspent run gold (1:1) + 5 per game won + 1 per kill (run total).
+   */
+  bankLegacyForCurrentRun(reason = 'RUN_END') {
+    if (this.legacyBankedForCurrentRun && this.lastLegacyEarned) {
+      return this.lastLegacyEarned;
+    }
+    const earned = computeLegacyEarned({
+      unspentGold: this.gold,
+      wins: this.runStats.wins,
+      kills: this.runStats.totalKills
+    });
+    this.meta.legacyGold = Math.max(0, (this.meta.legacyGold || 0) + earned.total);
+    this.lastLegacyEarned = {
+      ...earned,
+      reason,
+      newBankTotal: this.meta.legacyGold
+    };
+    this.legacyBankedForCurrentRun = true;
+    this.saveMetaToStorage();
+    this.renderHud();
+    return this.lastLegacyEarned;
   }
 
   /**
@@ -380,7 +633,7 @@ export class GraveyardGridironUI {
         opponentBench: this.opponentBench,
         muted: this.sfx.muted
       };
-      window.localStorage.setItem(RUN_STORAGE_KEY, JSON.stringify(payload));
+      getStorage().setItem(RUN_STORAGE_KEY, JSON.stringify(payload));
     } catch {
       // Ignore storage quota errors
     }
@@ -388,21 +641,24 @@ export class GraveyardGridironUI {
 
   loadRunFromStorage() {
     try {
-      const raw = window.localStorage.getItem(RUN_STORAGE_KEY);
+      const raw = getStorage().getItem(RUN_STORAGE_KEY);
       if (!raw) return false;
       const data = JSON.parse(raw);
       if (!data || data.version !== 1 || !Array.isArray(data.fieldRoster)) return false;
 
       this.seedCounter = data.seedCounter || 1001;
       this.gameNumber = data.gameNumber || 1;
-      this.gold = data.gold ?? 10;
-      this.teamHearts = data.teamHearts ?? 3;
+      this.gold = data.gold ?? this.getRunStartingGold();
+      this.teamHearts = data.teamHearts ?? this.getRunStartingHearts();
       this.fieldRoster = data.fieldRoster || [];
       this.benchRoster = data.benchRoster || [];
       this.shopSlots = data.shopSlots || [];
       this.heldTricks = data.heldTricks || [];
       this.gameResurrectionInsuranceArmed = Boolean(data.gameResurrectionInsuranceArmed);
       this.atShopBoundary = Boolean(data.atShopBoundary);
+      this.runEnded = false;
+      this.runEndReason = null;
+      this.legacyBankedForCurrentRun = false;
       this.runStats = data.runStats || {
         wins: 0,
         losses: 0,
@@ -421,10 +677,15 @@ export class GraveyardGridironUI {
       this.opponentField = data.opponentField || [];
       this.opponentBench = data.opponentBench || [];
       this.sfx.muted = Boolean(data.muted);
-      this.els.muteBtn.textContent = this.sfx.muted ? '🔇' : '🔊';
+      if (this.els?.muteBtn) {
+        this.els.muteBtn.textContent = this.sfx.muted ? '🔇' : '🔊';
+      }
 
       if (this.opponentField.length === 0) {
         this.generateOpponentRoster();
+      }
+      if (this.shopSlots.length === 0) {
+        this.rollShopSlots();
       }
 
       this.renderAll();
@@ -439,28 +700,43 @@ export class GraveyardGridironUI {
     }
   }
 
+  /**
+   * Hard reset the current run (Spec §15):
+   * - Banks Legacy Gold for the ended run (if not already banked at run summary)
+   * - Clears ONLY 'graveyard-gridiron-run-v1', NEVER clears 'graveyard-gridiron-meta-v1'
+   */
   hardResetRun() {
+    if (!this.legacyBankedForCurrentRun) {
+      this.bankLegacyForCurrentRun('MANUAL_RESET');
+    }
     try {
-      window.localStorage.removeItem(RUN_STORAGE_KEY);
+      getStorage().removeItem(RUN_STORAGE_KEY);
     } catch {
       // Ignore
     }
-    this.els.shopModal.classList.add('hidden');
-    this.els.resultModal.classList.add('hidden');
-    this.els.graveyardModal.classList.add('hidden');
-    this.els.runSummaryModal.classList.add('hidden');
+    this.saveMetaToStorage();
+    if (this.els) {
+      this.els.shopModal.classList.add('hidden');
+      this.els.resultModal.classList.add('hidden');
+      this.els.graveyardModal.classList.add('hidden');
+      this.els.runSummaryModal.classList.add('hidden');
+    }
     this.startNewRun(true);
   }
 
   startNewRun(fromReset = false) {
     this.gameNumber = 1;
-    this.gold = 10;
-    this.teamHearts = 3;
+    this.gold = this.getRunStartingGold();
+    this.teamHearts = this.getRunStartingHearts();
     this.fieldRoster = [];
     this.benchRoster = [];
     this.heldTricks = [];
     this.gameResurrectionInsuranceArmed = false;
     this.atShopBoundary = false;
+    this.runEnded = false;
+    this.runEndReason = null;
+    this.legacyBankedForCurrentRun = false;
+    this.lastLegacyEarned = null;
     this.allRunDeaths = [];
     this.runStats = {
       wins: 0,
@@ -472,30 +748,77 @@ export class GraveyardGridironUI {
     this.selectedUnitUid = null;
     this.lastCombineMessage = '';
 
+    // Apply Trick Satchel Legacy upgrade (§15: Start each run with 1 random Dirty Trick, unarmed)
+    const satchelRank = this.getUpgradeRank('trick_satchel');
+    const freeTricksCount = satchelRank * (LEGACY_UPGRADES.trick_satchel.freeTricksAtStart || 0);
+    const allTrickDefs = Object.values(DIRTY_TRICKS);
+    for (let i = 0; i < freeTricksCount; i++) {
+      const pickedTrick = this.rng.pick(allTrickDefs);
+      if (pickedTrick) {
+        this.heldTricks.push({
+          uid: `trick_satchel_${this.seedCounter++}`,
+          id: pickedTrick.id,
+          name: pickedTrick.name,
+          armed: false
+        });
+      }
+    }
+
     this.rollShopSlots();
-    this.quickDraftStarters();
     this.setupGameMatchup();
     this.saveRunToStorage();
     this.renderAll();
 
     if (fromReset) {
-      this.setTicker('🔄 RUN RESET! Fresh 10g budget drafted for Game 1 vs Coach Bones!', 'Tap 🛒 SHOP or press SNAP!');
+      this.setTicker(
+        `🔄 RUN RESET! Fresh ${this.gold}g budget ready for Game 1 vs Coach Bones!`,
+        'Tap 🛒 SHOP to sign mutants or press SNAP to auto-draft and battle!'
+      );
     }
   }
 
   rollShopSlots() {
-    // §7 Costs by tier: Tier 1 (Games 1-2 shop) 1-2g, Tier 2 (3-5) 2-3g, Tier 3 (6-8) 3-5g
-    // Build 3 includes TE_ROSTER_POOL via SHOP_POOL!
-    const maxTier = this.gameNumber <= 2 ? 1 : this.gameNumber <= 5 ? 2 : 3;
+    // §7 & §15 Early Scouting: maxTier calculated with gameNumber + early_scouting offset (cap tier 3)
+    const maxTier = this.getShopMaxTier();
     const eligible = SHOP_POOL.filter((p) => p.tier <= maxTier);
+    const tier1Pool = SHOP_POOL.filter((p) => p.tier === 1);
     this.shopSlots = [];
 
-    const isInitialRoll = this.fieldRoster.length === 0 && this.benchRoster.length === 0 && this.gold === 10;
+    const isInitialRoll =
+      this.gameNumber === 1 &&
+      this.fieldRoster.length === 0 &&
+      this.benchRoster.length === 0;
+
+    // §10 Rookie slot (v1.1): every shop roll guarantees exactly ONE Rookie slot (tier-1 template, cost 1g, label "ROOKIE").
+    // On the initial roll, slots 0 (RB) and 1 (OL) are guaranteed, so the Rookie slot is chosen from [2, 3, 4].
+    const candidateRookieSlots = isInitialRoll ? [2, 3, 4] : [0, 1, 2, 3, 4];
+    const rookieSlotIndex = this.rng.pick(candidateRookieSlots);
+
     const rbs = eligible.filter((p) => p.position === 'RB');
     const ols = eligible.filter((p) => p.position === 'OL');
     const tes = eligible.filter((p) => p.position === 'TE');
 
     for (let i = 0; i < 5; i++) {
+      if (i === rookieSlotIndex) {
+        const rookieBase = this.rng.pick(tier1Pool) || tier1Pool[0];
+        const rookieTemplate = {
+          ...rookieBase,
+          cost: ECONOMY_CONFIG.rookieSlotCost,
+          isRookie: true,
+          label: 'ROOKIE'
+        };
+        this.shopSlots.push({
+          slotIndex: i,
+          template: rookieTemplate,
+          cost: ECONOMY_CONFIG.rookieSlotCost,
+          isRookie: true,
+          rookie: true,
+          label: 'ROOKIE',
+          sold: false
+        });
+        continue;
+      }
+
       let pick;
       if (isInitialRoll && i === 0 && rbs.length > 0) {
         pick = this.rng.pick(rbs);
@@ -506,38 +829,57 @@ export class GraveyardGridironUI {
       } else {
         pick = this.rng.pick(eligible) || SHOP_POOL[i % SHOP_POOL.length];
       }
+
+      // Non-rookie slots cost at least 2g so every roll has EXACTLY ONE 1g Rookie slot
+      const nonRookieCost = Math.max(2, pick.cost);
+      const normalTemplate = {
+        ...pick,
+        cost: nonRookieCost,
+        isRookie: false,
+        label: ''
+      };
+
       this.shopSlots.push({
         slotIndex: i,
-        template: pick,
+        template: normalTemplate,
+        cost: nonRookieCost,
+        isRookie: false,
+        rookie: false,
+        label: '',
         sold: false
       });
     }
   }
 
   rerollShop() {
-    if (this.gold < 2) {
-      this.setTicker('💸 BROKE! You need 2g to reroll the Shop!', 'Sell a benched mutant (+1g) or go play a drive.');
-      return;
+    if (this.gold < ECONOMY_CONFIG.rerollCost) {
+      this.setTicker(
+        `💸 BROKE! You need ${ECONOMY_CONFIG.rerollCost}g to reroll the Shop!`,
+        'Sell a benched mutant (+1g) or go play a drive.'
+      );
+      return false;
     }
-    this.gold -= 2;
+    this.gold -= ECONOMY_CONFIG.rerollCost;
     this.sfx.play('buy');
     this.rollShopSlots();
     this.saveRunToStorage();
     this.renderShopModal();
     this.renderHud();
+    return true;
   }
 
   quickDraftStarters() {
     for (let i = 0; i < this.shopSlots.length; i++) {
       const slot = this.shopSlots[i];
-      if (!slot.sold && this.gold >= slot.template.cost) {
+      const slotCost = slot.cost ?? slot.template.cost;
+      if (!slot.sold && this.gold >= slotCost) {
         this.buyShopSlot(i, true);
       }
     }
     this.autoPlaceBenchIfSpace();
     this.saveRunToStorage();
     this.renderAll();
-    if (!this.els.shopModal.classList.contains('hidden')) {
+    if (this.els && !this.els.shopModal.classList.contains('hidden')) {
       this.renderShopModal();
     }
   }
@@ -545,17 +887,21 @@ export class GraveyardGridironUI {
   buyShopSlot(slotIndex, silent = false) {
     const slot = this.shopSlots[slotIndex];
     if (!slot || slot.sold) return false;
-    if (this.gold < slot.template.cost) {
+    const slotCost = slot.cost ?? slot.template.cost;
+    if (this.gold < slotCost) {
       if (!silent) {
-        this.setTicker('💸 NOT ENOUGH GOLD!', `${slot.template.name} costs ${slot.template.cost}g.`);
+        this.setTicker('💸 NOT ENOUGH GOLD!', `${slot.template.name} costs ${slotCost}g.`);
       }
       return false;
     }
 
-    this.gold -= slot.template.cost;
+    this.gold -= slotCost;
     slot.sold = true;
 
-    const newUnit = createUnit(slot.template.id, { side: 'player' });
+    const newUnit = createUnit(slot.template.id, {
+      side: 'player',
+      thickSkullsRank: this.getUpgradeRank('thick_skulls')
+    });
     newUnit.fielded = false;
     this.benchRoster.push(newUnit);
 
@@ -565,7 +911,7 @@ export class GraveyardGridironUI {
     if (!silent) {
       this.sfx.play('buy');
       this.setTicker(
-        `🛒 SIGNED: ${newUnit.name} (${newUnit.species} ${newUnit.position})!`,
+        `🛒 SIGNED: ${newUnit.name} (${newUnit.species} ${newUnit.position}${slot.isRookie ? ' • ROOKIE 1g' : ''})!`,
         this.lastCombineMessage || 'Tap a player and tap rows 0-2 to arrange formation.'
       );
       this.saveRunToStorage();
@@ -586,12 +932,13 @@ export class GraveyardGridironUI {
       this.setTicker('🔒 LOCKED!', `${trickDef.name} is only available from Game ${trickDef.minGame}+!`);
       return false;
     }
-    if (this.gold < trickDef.cost) {
-      this.setTicker('💸 NOT ENOUGH GOLD!', `${trickDef.name} costs ${trickDef.cost}g.`);
+    const cost = this.getTrickCost(trickId);
+    if (this.gold < cost) {
+      this.setTicker('💸 NOT ENOUGH GOLD!', `${trickDef.name} costs ${cost}g.`);
       return false;
     }
 
-    this.gold -= trickDef.cost;
+    this.gold -= cost;
     this.heldTricks.push({
       uid: `trick_${Date.now()}_${this.seedCounter++}`,
       id: trickDef.id,
@@ -619,7 +966,7 @@ export class GraveyardGridironUI {
     );
     this.saveRunToStorage();
     this.renderAll();
-    if (!this.els.shopModal.classList.contains('hidden')) {
+    if (this.els && !this.els.shopModal.classList.contains('hidden')) {
       this.renderShopModal();
     }
   }
@@ -876,7 +1223,9 @@ export class GraveyardGridironUI {
   cycleReplaySpeed() {
     this.replaySpeedMode = this.replaySpeedMode === 1 ? 2 : this.replaySpeedMode === 2 ? 3 : 1;
     const labels = { 1: '1x SPD', 2: '2x SPD', 3: 'MAX SPD' };
-    this.els.speedBtn.textContent = labels[this.replaySpeedMode];
+    if (this.els?.speedBtn) {
+      this.els.speedBtn.textContent = labels[this.replaySpeedMode];
+    }
   }
 
   getTickDelayMs() {
@@ -888,6 +1237,10 @@ export class GraveyardGridironUI {
   async handleSnapClick() {
     if (this.isReplaying) return;
 
+    // If snapping at start of run before opening Shop, auto-draft starter squad so 1-tap play works seamlessly
+    if (this.fieldRoster.length === 0 && this.benchRoster.length === 0 && this.gold > 0) {
+      this.quickDraftStarters();
+    }
     if (this.fieldRoster.length === 0 && this.benchRoster.length > 0) {
       this.autoPlaceBenchIfSpace();
     }
@@ -934,6 +1287,40 @@ export class GraveyardGridironUI {
     await this.replayDriveResult(simResult);
   }
 
+  /**
+   * Synchronous drive execution helper for deterministic headless tests
+   */
+  playDriveSync(customDriveState = null, customSeed = null) {
+    const armedTricks = this.heldTricks.filter((t) => t.armed).map((t) => t.id);
+    this.heldTricks = this.heldTricks.filter((t) => !t.armed);
+    if (armedTricks.includes('resurrection_insurance')) {
+      this.gameResurrectionInsuranceArmed = true;
+    }
+    const oppTricks = this.getOpponentActiveTricksForDrive();
+    const driveState = customDriveState || {
+      gameNumber: this.gameNumber,
+      playerUnits: this.fieldRoster,
+      opponentUnits: this.opponentField,
+      playerTricks: armedTricks,
+      playerResurrectionInsurance: this.gameResurrectionInsuranceArmed,
+      opponentTricks: oppTricks
+    };
+    const initialSnapCoords = new Map();
+    for (const u of this.fieldRoster) {
+      initialSnapCoords.set(u.uid, { row: u.row, col: u.col });
+    }
+    for (const u of this.opponentField) {
+      initialSnapCoords.set(u.uid, { row: u.row, col: u.col });
+    }
+    const seed = customSeed !== null ? customSeed : this.seedCounter++;
+    const simResult = simulateDrive(driveState, seed);
+    if (simResult.resurrectionInsuranceUsed?.player) {
+      this.gameResurrectionInsuranceArmed = false;
+    }
+    this.resolveDriveCompletion(simResult, initialSnapCoords);
+    return simResult;
+  }
+
   async replayDriveResult(simResult) {
     const liveUnits = new Map();
     const initialSnapCoords = new Map();
@@ -951,126 +1338,132 @@ export class GraveyardGridironUI {
 
     let currentDown = 0;
 
-    for (const tickRec of simResult.ticks) {
-      if (tickRec.down !== currentDown) {
-        currentDown = tickRec.down;
-        this.currentDownDisplay = currentDown;
-        for (const [uid, unit] of liveUnits.entries()) {
-          if (!unit.alive) continue;
-          const startPos = initialSnapCoords.get(uid);
-          if (startPos) {
-            unit.row = startPos.row;
-            unit.col = startPos.col;
+    if (this.els) {
+      for (const tickRec of simResult.ticks) {
+        if (tickRec.down !== currentDown) {
+          currentDown = tickRec.down;
+          this.currentDownDisplay = currentDown;
+          for (const [uid, unit] of liveUnits.entries()) {
+            if (!unit.alive) continue;
+            const startPos = initialSnapCoords.get(uid);
+            if (startPos) {
+              unit.row = startPos.row;
+              unit.col = startPos.col;
+            }
+            if (currentDown > 1) {
+              unit.hp = unit.maxHp;
+            }
           }
-          if (currentDown > 1) {
-            unit.hp = unit.maxHp;
+          this.renderFieldFromLiveUnits(liveUnits, {});
+          this.renderHud();
+        }
+
+        const animFlags = {};
+        let notableEventForTicker = null;
+
+        for (const ev of tickRec.events) {
+          if (ev.type === 'move' || ev.type === 'blink') {
+            const u = liveUnits.get(ev.unitId);
+            if (u) {
+              u.row = ev.to.row;
+              u.col = ev.to.col;
+              animFlags[u.uid] = 'anim-hop';
+            }
+            if (ev.type === 'blink' && !notableEventForTicker) {
+              notableEventForTicker = TICKER_TEMPLATES.blink(ev);
+            }
+          } else if (ev.type === 'shove') {
+            const target = liveUnits.get(ev.targetId);
+            if (target) {
+              target.row = ev.toRow;
+              animFlags[target.uid] = 'anim-hit';
+            }
+            animFlags[ev.attackerId] = 'anim-lunge';
+            if (!notableEventForTicker) notableEventForTicker = TICKER_TEMPLATES.shove(ev);
+          } else if (ev.type === 'attack') {
+            const target = liveUnits.get(ev.targetId);
+            if (target) {
+              target.hp = ev.targetRemainingHp;
+              animFlags[target.uid] = 'anim-hit';
+            }
+            animFlags[ev.attackerId] = 'anim-lunge';
+            this.sfx.play('hit');
+          } else if (ev.type === 'bribe_callback') {
+            if (!notableEventForTicker) notableEventForTicker = TICKER_TEMPLATES.bribe_callback(ev);
+          } else if (ev.type === 'mine') {
+            const u = liveUnits.get(ev.unitId);
+            if (u) {
+              u.hp = Math.max(0, u.hp - ev.damage);
+              animFlags[u.uid] = 'anim-hit';
+            }
+            this.sfx.play('mine');
+            notableEventForTicker = TICKER_TEMPLATES.mine(ev);
+          } else if (ev.type === 'poison_tick' || ev.type === 'chainsaw_burn') {
+            const u = liveUnits.get(ev.unitId);
+            if (u) {
+              u.hp = ev.remainingHp;
+            }
+          } else if (ev.type === 'sack') {
+            notableEventForTicker = TICKER_TEMPLATES.sack(ev);
+          } else if (ev.type === 'catch') {
+            notableEventForTicker = TICKER_TEMPLATES.catch(ev);
+          } else if (ev.type === 'intercept') {
+            notableEventForTicker = TICKER_TEMPLATES.intercept(ev);
+          } else if (ev.type === 'resurrection_insurance') {
+            const u = liveUnits.get(ev.unitId);
+            if (u) {
+              u.hp = 1;
+              u.alive = true;
+            }
+            notableEventForTicker = TICKER_TEMPLATES.resurrection_insurance(ev);
+          } else if (ev.type === 'kill') {
+            const victim = liveUnits.get(ev.victimId);
+            if (victim) {
+              victim.hp = 0;
+              victim.alive = false;
+              animFlags[victim.uid] = 'anim-death';
+              this.driveSplats.push({
+                row: victim.row,
+                col: victim.col,
+                icon: SPECIES_SPLAT_ICON[victim.species] || '🩸💥'
+              });
+            }
+            this.sfx.play('splat');
+            notableEventForTicker = TICKER_TEMPLATES.kill(ev);
+          } else if (ev.type === 'massacre') {
+            notableEventForTicker = TICKER_TEMPLATES.massacre(ev);
           }
         }
-        this.renderFieldFromLiveUnits(liveUnits, {});
-        this.renderHud();
-      }
 
-      const animFlags = {};
-      let notableEventForTicker = null;
-
-      for (const ev of tickRec.events) {
-        if (ev.type === 'move' || ev.type === 'blink') {
-          const u = liveUnits.get(ev.unitId);
-          if (u) {
-            u.row = ev.to.row;
-            u.col = ev.to.col;
-            animFlags[u.uid] = 'anim-hop';
-          }
-          if (ev.type === 'blink' && !notableEventForTicker) {
-            notableEventForTicker = TICKER_TEMPLATES.blink(ev);
-          }
-        } else if (ev.type === 'shove') {
-          const target = liveUnits.get(ev.targetId);
-          if (target) {
-            target.row = ev.toRow;
-            animFlags[target.uid] = 'anim-hit';
-          }
-          animFlags[ev.attackerId] = 'anim-lunge';
-          if (!notableEventForTicker) notableEventForTicker = TICKER_TEMPLATES.shove(ev);
-        } else if (ev.type === 'attack') {
-          const target = liveUnits.get(ev.targetId);
-          if (target) {
-            target.hp = ev.targetRemainingHp;
-            animFlags[target.uid] = 'anim-hit';
-          }
-          animFlags[ev.attackerId] = 'anim-lunge';
-          this.sfx.play('hit');
-        } else if (ev.type === 'bribe_callback') {
-          if (!notableEventForTicker) notableEventForTicker = TICKER_TEMPLATES.bribe_callback(ev);
-        } else if (ev.type === 'mine') {
-          const u = liveUnits.get(ev.unitId);
-          if (u) {
-            u.hp = Math.max(0, u.hp - ev.damage);
-            animFlags[u.uid] = 'anim-hit';
-          }
-          this.sfx.play('mine');
-          notableEventForTicker = TICKER_TEMPLATES.mine(ev);
-        } else if (ev.type === 'poison_tick' || ev.type === 'chainsaw_burn') {
-          const u = liveUnits.get(ev.unitId);
-          if (u) {
-            u.hp = ev.remainingHp;
-          }
-        } else if (ev.type === 'sack') {
-          notableEventForTicker = TICKER_TEMPLATES.sack(ev);
-        } else if (ev.type === 'catch') {
-          notableEventForTicker = TICKER_TEMPLATES.catch(ev);
-        } else if (ev.type === 'intercept') {
-          notableEventForTicker = TICKER_TEMPLATES.intercept(ev);
-        } else if (ev.type === 'resurrection_insurance') {
-          const u = liveUnits.get(ev.unitId);
-          if (u) {
-            u.hp = 1;
-            u.alive = true;
-          }
-          notableEventForTicker = TICKER_TEMPLATES.resurrection_insurance(ev);
-        } else if (ev.type === 'kill') {
-          const victim = liveUnits.get(ev.victimId);
-          if (victim) {
-            victim.hp = 0;
-            victim.alive = false;
-            animFlags[victim.uid] = 'anim-death';
-            this.driveSplats.push({
-              row: victim.row,
-              col: victim.col,
-              icon: SPECIES_SPLAT_ICON[victim.species] || '🩸💥'
-            });
-          }
-          this.sfx.play('splat');
-          notableEventForTicker = TICKER_TEMPLATES.kill(ev);
-        } else if (ev.type === 'massacre') {
-          notableEventForTicker = TICKER_TEMPLATES.massacre(ev);
+        if (notableEventForTicker) {
+          this.setTicker(notableEventForTicker, `Drive ${this.driveNumber}/4 • Down ${tickRec.down} • Tick ${tickRec.tick}/8`);
         }
-      }
 
-      if (notableEventForTicker) {
-        this.setTicker(notableEventForTicker, `Drive ${this.driveNumber}/4 • Down ${tickRec.down} • Tick ${tickRec.tick}/8`);
-      }
+        this.renderFieldFromLiveUnits(liveUnits, animFlags, true);
+        await new Promise((r) => setTimeout(r, this.getTickDelayMs()));
 
-      this.renderFieldFromLiveUnits(liveUnits, animFlags, true);
-      await new Promise((r) => setTimeout(r, this.getTickDelayMs()));
-
-      const downSummary = simResult.downs.find((d) => d.down === tickRec.down);
-      const isLastTickOfDown =
-        !simResult.ticks.some((t) => t.down === tickRec.down && t.tick > tickRec.tick);
-      if (isLastTickOfDown && downSummary) {
-        this.currentDriveYards = downSummary.cumulativeYards;
-        this.renderThermometer();
-        const downEndEv = downSummary.events.find((e) => e.type === 'down_end');
-        if (downEndEv) {
-          const line =
-            downEndEv.yardsThisDown >= 20
-              ? TICKER_TEMPLATES.big_gain(downEndEv)
-              : TICKER_TEMPLATES.down_end(downEndEv);
-          this.setTicker(line, `Drive Total: ${this.currentDriveYards} / 80 yds`);
+        const downSummary = simResult.downs.find((d) => d.down === tickRec.down);
+        const isLastTickOfDown =
+          !simResult.ticks.some((t) => t.down === tickRec.down && t.tick > tickRec.tick);
+        if (isLastTickOfDown && downSummary) {
+          this.currentDriveYards = downSummary.cumulativeYards;
+          this.renderThermometer();
+          const downEndEv = downSummary.events.find((e) => e.type === 'down_end');
+          if (downEndEv) {
+            const line =
+              downEndEv.yardsThisDown >= 20
+                ? TICKER_TEMPLATES.big_gain(downEndEv)
+                : TICKER_TEMPLATES.down_end(downEndEv);
+            this.setTicker(line, `Drive Total: ${this.currentDriveYards} / 80 yds`);
+          }
         }
       }
     }
 
+    this.resolveDriveCompletion(simResult, initialSnapCoords);
+  }
+
+  resolveDriveCompletion(simResult, initialSnapCoords = new Map()) {
     // Drive complete: update game & run stats
     this.currentDriveYards = simResult.yards;
     this.playerGameScore += simResult.points;
@@ -1139,7 +1532,7 @@ export class GraveyardGridironUI {
 
     this.isReplaying = false;
 
-    // Check immediate Game End conditions (Amendment 2: ENTIRE roster field + bench wiped):
+    // Check immediate Game & Run End conditions (§5 as amended in v1.1: ENTIRE player roster field + bench wiped):
     if (promo.rosterWiped) {
       this.finishGame({ forcedOutcome: 'LOSS_WIPE' });
       return;
@@ -1174,22 +1567,7 @@ export class GraveyardGridironUI {
     this.renderAll();
   }
 
-  finishGame({ forcedOutcome = null }) {
-    let playerWon = this.playerGameScore > this.opponentGameScore;
-    if (forcedOutcome === 'WIN_MASSACRE') playerWon = true;
-    if (forcedOutcome === 'LOSS_WIPE') playerWon = false;
-    if (this.playerGameScore === this.opponentGameScore && !forcedOutcome) {
-      const lastDrive = this.driveHistory[this.driveHistory.length - 1];
-      playerWon = Boolean(lastDrive && lastDrive.yards >= 40);
-    }
-
-    this.lastGamePlayerWon = playerWon;
-    if (playerWon) {
-      this.runStats.wins += 1;
-    } else {
-      this.runStats.losses += 1;
-    }
-
+  finishGame({ forcedOutcome = null } = {}) {
     // Compute active Skeleton synergy tier for post-game Skeleton Reassemble (§7)
     const syn = computeSynergies([...this.fieldRoster, ...this.currentGameDeaths]);
     const postGame = resolvePostGamePermadeath({
@@ -1222,12 +1600,47 @@ export class GraveyardGridironUI {
     this.allRunDeaths.push(...postGame.graveyard);
     this.runStats.totalDeaths = this.allRunDeaths.length;
 
-    // Economy reward (§10: Win = +6g + 1g per surviving starter max +5; Loss = +3g, -1 Team Heart)
-    const survivingStartersBonus = Math.min(5, this.fieldRoster.length);
-    const goldEarned = playerWon ? 6 + survivingStartersBonus : 3;
-    this.gold += goldEarned;
-    if (!playerWon) {
+    // §5 as amended (v1.1): if the ENTIRE player roster (field + bench) is wiped, the game ends as a loss AND the run ends on the spot!
+    const entireRosterWiped =
+      forcedOutcome === 'LOSS_WIPE' ||
+      this.fieldRoster.length + this.benchRoster.length === 0;
+
+    let playerWon = this.playerGameScore > this.opponentGameScore;
+    if (forcedOutcome === 'WIN_MASSACRE') playerWon = true;
+    if (entireRosterWiped) playerWon = false;
+    if (this.playerGameScore === this.opponentGameScore && !forcedOutcome && !entireRosterWiped) {
+      const lastDrive = this.driveHistory[this.driveHistory.length - 1];
+      playerWon = Boolean(lastDrive && lastDrive.yards >= 40);
+    }
+
+    this.lastGamePlayerWon = playerWon;
+    if (playerWon) {
+      this.runStats.wins += 1;
+    } else {
+      this.runStats.losses += 1;
       this.teamHearts = Math.max(0, this.teamHearts - 1);
+    }
+
+    if (entireRosterWiped) {
+      // §5 v1.1: Massacre ends the game as a loss AND ends the run immediately with Legacy Gold banked!
+      this.renderAll();
+      this.openRunSummaryModal('MASSACRE');
+      return;
+    }
+
+    // Economy reward (§10 as amended in v1.1: Win = +6g + 1g per surviving starter max +5; Loss = +5g Comeback Floor)
+    const survivingStartersBonus = Math.min(
+      ECONOMY_CONFIG.winMaxSurvivorBonus,
+      this.fieldRoster.length
+    );
+    const runContinuesAfterGame =
+      this.teamHearts > 0 && !(this.gameNumber >= 8 && playerWon);
+    const goldEarned = playerWon
+      ? ECONOMY_CONFIG.winBaseGold + survivingStartersBonus
+      : ECONOMY_CONFIG.lossGold;
+
+    if (runContinuesAfterGame) {
+      this.gold += goldEarned;
     }
 
     this.saveRunToStorage();
@@ -1235,13 +1648,14 @@ export class GraveyardGridironUI {
     this.openResultModal({
       playerWon,
       forcedOutcome,
-      goldEarned,
+      goldEarned: runContinuesAfterGame ? goldEarned : 0,
       survivingStartersBonus,
       graveyardDeathsThisGame: postGame.graveyard
     });
   }
 
   openResultModal({ playerWon, forcedOutcome, goldEarned, survivingStartersBonus, graveyardDeathsThisGame }) {
+    if (!this.els) return;
     const coach = this.getCurrentCoach();
     const bannerColor = playerWon ? 'var(--neon-green)' : 'var(--cartoon-red)';
     const titleText =
@@ -1263,6 +1677,7 @@ export class GraveyardGridironUI {
       )
       .join('');
 
+    const maxHearts = Math.max(this.getRunStartingHearts(), this.teamHearts);
     this.els.resultContent.innerHTML = `
       <div class="result-summary-card" style="border-color: ${bannerColor}">
         <div style="font-size: 18px; font-weight: 900; color: ${bannerColor}; margin-bottom: 4px;">
@@ -1276,11 +1691,13 @@ export class GraveyardGridironUI {
         </div>
         <div style="font-size: 12px; color: var(--neon-green); font-weight: 800;">
           💰 Gold Earned: +${goldEarned}g ${
-      playerWon ? `(6g Win + ${survivingStartersBonus}g Survivor Bonus)` : '(3g Mercy TV Money)'
+      playerWon
+        ? `(${ECONOMY_CONFIG.winBaseGold}g Win + ${survivingStartersBonus}g Survivor Bonus)`
+        : `(${ECONOMY_CONFIG.lossGold}g Mercy TV Money)`
     }
         </div>
         <div style="font-size: 12px; color: #ff8a80; font-weight: 800; margin-top: 3px;">
-          ❤️ Team Hearts: ${'❤️'.repeat(this.teamHearts)}${'🖤'.repeat(3 - this.teamHearts)} | 💀 Game Casualties: ${graveyardDeathsThisGame.length}
+          ❤️ Team Hearts: ${'❤️'.repeat(this.teamHearts)}${'🖤'.repeat(Math.max(0, maxHearts - this.teamHearts))} | 💀 Game Casualties: ${graveyardDeathsThisGame.length}
         </div>
       </div>
       <div class="shop-Section-title">Drive-by-Drive Breakdown</div>
@@ -1291,6 +1708,7 @@ export class GraveyardGridironUI {
   }
 
   openGraveyardModal() {
+    if (!this.els) return;
     if (this.lastReassembled && this.lastReassembled.length > 0) {
       const names = this.lastReassembled.map((u) => u.name).join(', ');
       this.els.reassembleBanner.textContent = `💀 SKELETON REASSEMBLE! ${names} duct-taped their own bones back together and crawled onto the bench!`;
@@ -1331,8 +1749,8 @@ export class GraveyardGridironUI {
   /**
    * Transition after Graveyard screen:
    * - Win Game 8 -> Graveyard Cup Victory Run Summary screen (§3/§9)
-   * - Lose 3 games (teamHearts <= 0) -> Run Over Summary screen (§3/§9)
-   * - Otherwise advance to Game N+1 Shop, and check "NO ONE LEFT TO BURY THE DEAD" (Amendment 2)
+   * - Lose all Team Hearts (teamHearts <= 0) -> Run Over Summary screen (§3/§9)
+   * - Otherwise advance to Game N+1 Shop
    */
   advanceAfterGraveyard() {
     if (this.gameNumber >= 8 && this.lastGamePlayerWon) {
@@ -1350,11 +1768,11 @@ export class GraveyardGridironUI {
     this.rollShopSlots();
     this.setupGameMatchup();
 
-    // Check Spec §5 Amendment 2: if no players remain on field+bench and none can be afforded in the Shop -> RUN ENDS
+    // Check if no players remain on field+bench and none can be afforded in the Shop -> RUN ENDS
     const totalPlayers = this.fieldRoster.length + this.benchRoster.length;
-    const minShopCost = Math.min(...this.shopSlots.map((s) => s.template.cost));
+    const minShopCost = Math.min(...this.shopSlots.map((s) => s.cost ?? s.template.cost));
     if (totalPlayers === 0 && this.gold < minShopCost) {
-      this.openRunSummaryModal('NO_ONE_LEFT');
+      this.openRunSummaryModal('MASSACRE');
       return;
     }
 
@@ -1378,17 +1796,34 @@ export class GraveyardGridironUI {
 
   openRunSummaryModal(reason = 'CUP_VICTORY') {
     this.atShopBoundary = false;
+    this.runEnded = true;
+    this.runEndReason = reason;
+
+    // Bank Legacy Gold immediately at run end (§15)
+    const legacy = this.bankLegacyForCurrentRun(reason);
+    try {
+      getStorage().removeItem(RUN_STORAGE_KEY);
+    } catch {
+      // Ignore
+    }
+
+    if (!this.els) return;
+
+    this.els.shopModal.classList.add('hidden');
+    this.els.resultModal.classList.add('hidden');
+    this.els.graveyardModal.classList.add('hidden');
+
     let bannerTitle = '🏆 GRAVEYARD CUP CHAMPIONS!';
     let bannerSubtitle = 'You conquered all 8 Gauntlet Coaches and hoisted the Graveyard Cup!';
     let bannerColor = 'var(--neon-yellow)';
 
     if (reason === 'HEARTS_DEPLETED') {
       bannerTitle = '☠️ RUN OVER — OUT OF TEAM HEARTS!';
-      bannerSubtitle = 'You lost 3 games and the franchise was repossessed by necromancers.';
+      bannerSubtitle = 'You lost all your Team Hearts and the franchise was repossessed by necromancers.';
       bannerColor = 'var(--cartoon-red)';
-    } else if (reason === 'NO_ONE_LEFT') {
-      bannerTitle = '🪦 NO ONE LEFT TO BURY THE DEAD';
-      bannerSubtitle = 'Every mutant on your roster is dead and you cannot afford a replacement!';
+    } else if (reason === 'MASSACRE' || reason === 'NO_ONE_LEFT') {
+      bannerTitle = '🪦 MASSACRE — NO ONE LEFT TO BURY THE DEAD';
+      bannerSubtitle = 'Your entire roster (field + bench) was wiped out! The run ends in a glorious massacre — spend your Legacy Gold to come back meaner!';
       bannerColor = 'var(--cartoon-red)';
     }
 
@@ -1417,7 +1852,7 @@ export class GraveyardGridironUI {
 
     this.els.runSummaryContent.innerHTML = `
       <div class="result-summary-card" style="border-color: ${bannerColor}">
-        <div style="font-size: 20px; font-weight: 900; color: ${bannerColor}; margin-bottom: 4px;">
+        <div style="font-size: 19px; font-weight: 900; color: ${bannerColor}; margin-bottom: 4px;">
           ${bannerTitle}
         </div>
         <div style="font-size: 12px; color: #fff; margin-bottom: 10px;">
@@ -1442,17 +1877,95 @@ export class GraveyardGridironUI {
           </div>
         </div>
       </div>
+
+      <div class="result-summary-card" style="border-color: #ce93d8; text-align: left;">
+        <div style="font-size: 14px; font-weight: 900; color: #f3e5f5; margin-bottom: 6px;">
+          ⚰️ LEGACY GOLD BANKED THIS RUN: +${legacy.total}
+        </div>
+        <div class="shop-roster-list">
+          <div class="roster-row-item">
+            <span>💰 Unspent Run Gold (${legacy.unspentGold} × ${LEGACY_EARNING_RATES.perUnspentGold})</span>
+            <strong>+${legacy.unspentBonus} ⚰️</strong>
+          </div>
+          <div class="roster-row-item">
+            <span>🏆 Games Won (${legacy.wins} × ${LEGACY_EARNING_RATES.perWin})</span>
+            <strong>+${legacy.winBonus} ⚰️</strong>
+          </div>
+          <div class="roster-row-item">
+            <span>💀 Total Kills (${legacy.kills} × ${LEGACY_EARNING_RATES.perKill})</span>
+            <strong>+${legacy.killBonus} ⚰️</strong>
+          </div>
+          <div class="roster-row-item" style="border-color: var(--neon-yellow);">
+            <span style="color: var(--neon-yellow); font-weight: 900;">🏦 New Legacy Bank Total</span>
+            <strong style="color: var(--neon-yellow); font-size: 14px;">⚰️ ${this.meta.legacyGold} Legacy Gold</strong>
+          </div>
+        </div>
+      </div>
+
       ${funniestHtml}
     `;
 
     this.els.runSummaryModal.classList.remove('hidden');
   }
 
+  openLegacyModal() {
+    if (!this.els?.legacyModal) return;
+    this.renderLegacyModal();
+    this.els.legacyModal.classList.remove('hidden');
+  }
+
+  closeLegacyModal() {
+    if (!this.els?.legacyModal) return;
+    this.els.legacyModal.classList.add('hidden');
+  }
+
+  renderLegacyModal() {
+    if (!this.els?.legacyModal) return;
+    if (this.els.legacyBankDisplay) {
+      this.els.legacyBankDisplay.textContent = `⚰️ ${this.meta.legacyGold} Legacy Gold`;
+    }
+
+    this.els.legacyUpgradesGrid.innerHTML = Object.values(LEGACY_UPGRADES)
+      .map((up) => {
+        const rank = this.getUpgradeRank(up.id);
+        const isMaxed = rank >= up.maxRank;
+        const nextPrice = isMaxed ? null : up.prices[rank];
+        const canAfford = !isMaxed && this.meta.legacyGold >= nextPrice;
+        const btnLabel = isMaxed ? 'MAXED' : `BUY (${nextPrice} ⚰️)`;
+
+        return `
+          <div class="shop-card ${isMaxed ? 'sold' : ''}">
+            <div class="shop-card-info">
+              <div class="shop-card-name">
+                <span>${up.emoji}</span>
+                <span>${up.name}</span>
+                <span class="legacy-rank-pill">Rank ${rank}/${up.maxRank}</span>
+              </div>
+              <div class="shop-card-stats">${up.effectText}</div>
+            </div>
+            <button type="button" class="shop-buy-btn" data-buy-legacy="${up.id}" ${canAfford ? '' : 'disabled'}>
+              ${btnLabel}
+            </button>
+          </div>
+        `;
+      })
+      .join('');
+
+    this.els.legacyUpgradesGrid.querySelectorAll('[data-buy-legacy]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const upgradeId = btn.getAttribute('data-buy-legacy');
+        this.buyLegacyUpgrade(upgradeId);
+      });
+    });
+  }
+
   openShopModal() {
     this.atShopBoundary = true;
     this.saveRunToStorage();
     this.renderShopModal();
-    this.els.shopModal.classList.remove('hidden');
+    if (this.els?.shopModal) {
+      this.els.shopModal.classList.remove('hidden');
+    }
   }
 
   closeShopModal() {
@@ -1461,14 +1974,21 @@ export class GraveyardGridironUI {
 
     // Check "NO ONE LEFT TO BURY THE DEAD" if closing shop with 0 total players and insufficient gold
     const totalPlayers = this.fieldRoster.length + this.benchRoster.length;
-    const minShopCost = Math.min(...this.shopSlots.filter((s) => !s.sold).map((s) => s.template.cost), 99);
+    const minShopCost = Math.min(
+      ...this.shopSlots.filter((s) => !s.sold).map((s) => s.cost ?? s.template.cost),
+      99
+    );
     if (totalPlayers === 0 && this.gold < minShopCost) {
-      this.els.shopModal.classList.add('hidden');
-      this.openRunSummaryModal('NO_ONE_LEFT');
+      if (this.els?.shopModal) {
+        this.els.shopModal.classList.add('hidden');
+      }
+      this.openRunSummaryModal('MASSACRE');
       return;
     }
 
-    this.els.shopModal.classList.add('hidden');
+    if (this.els?.shopModal) {
+      this.els.shopModal.classList.add('hidden');
+    }
     if (this.driveNumber === 1) {
       this.announceMatchupTelegraph();
     }
@@ -1477,11 +1997,13 @@ export class GraveyardGridironUI {
   }
 
   setTicker(headline, subline = '') {
+    if (!this.els) return;
     this.els.tickerHeadline.textContent = headline;
     this.els.tickerSubline.textContent = subline;
   }
 
   renderHud() {
+    if (!this.els) return;
     const coach = this.getCurrentCoach();
     this.els.gameBadge.textContent = `G${this.gameNumber}/8`;
     this.els.coachName.textContent = coach.name;
@@ -1490,9 +2012,13 @@ export class GraveyardGridironUI {
     this.els.goldDisplay.textContent = `💰${this.gold}g`;
     this.els.heartsDisplay.textContent = '❤️'.repeat(this.teamHearts) || '💀';
     this.els.muteBtn.textContent = this.sfx.muted ? '🔇' : '🔊';
+    if (this.els.hudLegacyGold) {
+      this.els.hudLegacyGold.textContent = String(this.meta?.legacyGold || 0);
+    }
   }
 
   renderBenchAndSynergies() {
+    if (!this.els) return;
     // Bench chips
     if (this.benchRoster.length === 0) {
       this.els.benchSlotsRow.innerHTML = `<span class="bench-label">BENCH(0)</span>`;
@@ -1552,12 +2078,14 @@ export class GraveyardGridironUI {
   }
 
   renderThermometer() {
+    if (!this.els) return;
     const pct = Math.max(0, Math.min(100, (this.currentDriveYards / FIELD_CONFIG.tdYards) * 100));
     this.els.thermoFill.style.height = `${pct}%`;
     this.els.thermoYards.textContent = `${this.currentDriveYards}y`;
   }
 
   renderFieldFromLiveUnits(liveUnitsMap, animFlags = {}, keepDeadFrame = false) {
+    if (!this.els) return;
     const allUnits = Array.from(liveUnitsMap.values());
     const playerLiving = allUnits.filter((u) => u.side === 'player' && u.alive && u.hp > 0);
     const carrier =
@@ -1639,6 +2167,7 @@ export class GraveyardGridironUI {
   }
 
   renderShopModal() {
+    if (!this.els) return;
     const limit = this.getFieldLimit();
     this.els.shopGameNum.textContent = String(this.gameNumber);
     this.els.shopGold.textContent = `💰 ${this.gold}g`;
@@ -1655,25 +2184,31 @@ export class GraveyardGridironUI {
     this.els.shopCardsGrid.innerHTML = this.shopSlots
       .map((slot, idx) => {
         const t = slot.template;
+        const slotCost = slot.cost ?? t.cost;
+        const isRookie = Boolean(slot.isRookie || t.isRookie);
         const sp = SPECIES[t.species];
         const pos = POSITIONS[t.position];
-        const preview = createUnit(t.id);
-        const canBuy = !slot.sold && this.gold >= t.cost;
+        const preview = createUnit(t.id, {
+          side: 'player',
+          thickSkullsRank: this.getUpgradeRank('thick_skulls')
+        });
+        const canBuy = !slot.sold && this.gold >= slotCost;
 
         return `
-          <div class="shop-card ${slot.sold ? 'sold' : ''}">
+          <div class="shop-card ${slot.sold ? 'sold' : ''} ${isRookie ? 'rookie-card' : ''}">
             <div class="shop-card-info">
               <div class="shop-card-name">
                 <span>${sp.emoji}</span>
                 <span class="pos-badge">${t.position}</span>
                 <span>${t.name}</span>
+                ${isRookie ? '<span class="rookie-badge">ROOKIE</span>' : ''}
               </div>
               <div class="shop-card-stats">
                 ${t.species} • HP ${preview.maxHp} • DMG ${preview.dmg} • SPD ${preview.speed} • RNG ${preview.range} (${pos.name})
               </div>
             </div>
             <button type="button" class="shop-buy-btn" data-buy-slot="${idx}" ${canBuy ? '' : 'disabled'}>
-              ${slot.sold ? 'SOLD' : `BUY (${t.cost}g)`}
+              ${slot.sold ? 'SOLD' : `BUY (${slotCost}g)`}
             </button>
           </div>
         `;
@@ -1687,17 +2222,18 @@ export class GraveyardGridironUI {
       });
     });
 
-    // Render Dirty Tricks Shop (§8: max 3 held, Resurrection Insurance only Games 5+)
+    // Render Dirty Tricks Shop (§8: max 3 held, Resurrection Insurance only Games 5+, Cut-Rate Insurance discount)
     this.els.shopTricksGrid.innerHTML = Object.values(DIRTY_TRICKS)
       .map((trick) => {
         const lockedByGame = this.gameNumber < (trick.minGame || 1);
         const fullHeld = this.heldTricks.length >= 3;
-        const canAfford = this.gold >= trick.cost && !lockedByGame && !fullHeld;
+        const effectiveCost = this.getTrickCost(trick.id);
+        const canAfford = this.gold >= effectiveCost && !lockedByGame && !fullHeld;
         const btnLabel = lockedByGame
           ? `G${trick.minGame}+ ONLY`
           : fullHeld
           ? 'MAX 3 HELD'
-          : `BUY (${trick.cost}g)`;
+          : `BUY (${effectiveCost}g)`;
 
         return `
           <div class="shop-card ${lockedByGame ? 'sold' : ''}">
@@ -1728,7 +2264,7 @@ export class GraveyardGridironUI {
       return `
         <div class="roster-row-item">
           <span>[BENCH] ${sp.emoji} <strong>${u.name}</strong> (${u.position} ${stars}) — HP ${u.maxHp} / DMG ${u.dmg}</span>
-          <button type="button" class="sell-btn" data-sell-uid="${u.uid}">SELL (+1g)</button>
+          <button type="button" class="sell-btn" data-sell-uid="${u.uid}">SELL (+${ECONOMY_CONFIG.sellBenchRefund}g)</button>
         </div>
       `;
     });
@@ -1756,6 +2292,7 @@ export class GraveyardGridironUI {
   }
 
   renderAll() {
+    if (!this.els) return;
     this.renderHud();
     this.renderBenchAndSynergies();
     this.renderThermometer();

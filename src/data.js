@@ -17,6 +17,7 @@ export const FIELD_CONFIG = {
   tdPoints: 7,
   fgPoints: 3,
   defaultFieldLimit: 6,
+  startingHearts: 3,
   fieldLimitByGame: [5, 5, 6, 6, 6, 7, 7, 7]
 };
 
@@ -533,3 +534,81 @@ export const DEATH_TEMPLATES = {
     'Heart exploded into neon confetti in the locker room after chugging a Steroid Slushie!'
   ]
 };
+
+// §10 & §15 (v1.1 Legacy & Comeback Floor)
+export const META_STORAGE_KEY = 'graveyard-gridiron-meta-v1';
+
+export const ECONOMY_CONFIG = {
+  startGold: 10,
+  winBaseGold: 6,
+  winMaxSurvivorBonus: 5,
+  lossGold: 5, // v1.1 Comeback Floor: raised from 3g to 5g
+  rerollCost: 2,
+  sellBenchRefund: 1,
+  rookieSlotCost: 1
+};
+
+export const LEGACY_EARNING_RATES = {
+  perUnspentGold: 1,
+  perWin: 5,
+  perKill: 1
+};
+
+export const LEGACY_UPGRADES = {
+  deep_pockets: {
+    id: 'deep_pockets',
+    name: 'Deep Pockets',
+    emoji: '💰',
+    maxRank: 3,
+    prices: [15, 25, 40],
+    bonusGoldPerRank: 2,
+    effectText: '+2 starting gold per rank'
+  },
+  thick_skulls: {
+    id: 'thick_skulls',
+    name: 'Thick Skulls',
+    emoji: '🪖',
+    maxRank: 3,
+    prices: [15, 25, 40],
+    hpBonusPctPerRank: 0.05,
+    effectText: '+5% max HP for all player units per rank (applied after star scaling)'
+  },
+  trick_satchel: {
+    id: 'trick_satchel',
+    name: 'Trick Satchel',
+    emoji: '🎒',
+    maxRank: 1,
+    prices: [30],
+    freeTricksAtStart: 1,
+    effectText: 'Start each run with 1 random Dirty Trick (unarmed)'
+  },
+  extra_heart: {
+    id: 'extra_heart',
+    name: 'Extra Heart',
+    emoji: '❤️',
+    maxRank: 1,
+    prices: [50],
+    bonusHeartsPerRank: 1,
+    effectText: '+1 Team Heart at run start'
+  },
+  early_scouting: {
+    id: 'early_scouting',
+    name: 'Early Scouting',
+    emoji: '🔭',
+    maxRank: 1,
+    prices: [35],
+    gameTierOffset: 1,
+    maxTierCap: 3,
+    effectText: 'Shop tier unlock calculated as if game number were +1 (cap tier 3)'
+  },
+  cut_rate_insurance: {
+    id: 'cut_rate_insurance',
+    name: 'Cut-Rate Insurance',
+    emoji: '⚡',
+    maxRank: 1,
+    prices: [25],
+    discountedInsuranceCost: 4,
+    effectText: 'Resurrection Insurance costs 4g instead of 8g'
+  }
+};
+
