@@ -1606,11 +1606,8 @@ export function simulateDrive(state, rngSeed = 1) {
     }
   }
 
-  // Opponent simulated scoring (§5: 21 - round(yards / 5) clamped 0..14)
-  const opponentPoints =
-    driveOutcome === 'MASSACRE_WIN'
-      ? 0
-      : Math.max(0, Math.min(14, 21 - Math.round(driveYards / 5)));
+  // Opponent simulated scoring (§5 Tuning Pass 1: clamp(12 - round(driveYards / 6), 0, 12); MASSACRE_WIN = 0; player wipe = 14)
+  const opponentPoints = computeOpponentPoints(driveYards, driveOutcome);
 
   // §5: Surviving players heal to full baseMaxHp between DRIVES. Dead stays dead.
   const survivingPlayerRoster = getLiving(rawPlayerUnits).map((u) => ({
@@ -1659,6 +1656,18 @@ export function simulateDrive(state, rngSeed = 1) {
       opponent: opponentSynergies
     }
   };
+}
+
+/**
+ * Per-drive simulated opponent scoring (Spec §5 Tuning Pass 1):
+ * - MASSACRE_WIN -> 0
+ * - MASSACRE_LOSS (player wipe) -> 14
+ * - Otherwise -> clamp(12 - round(driveYards / 6), 0, 12)
+ */
+export function computeOpponentPoints(driveYards, driveOutcome = 'TURNOVER') {
+  if (driveOutcome === 'MASSACRE_WIN') return 0;
+  if (driveOutcome === 'MASSACRE_LOSS') return 14;
+  return Math.max(0, Math.min(12, 12 - Math.round(driveYards / 6)));
 }
 
 /**

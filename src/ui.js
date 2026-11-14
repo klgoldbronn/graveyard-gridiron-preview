@@ -157,6 +157,17 @@ const TICKER_TEMPLATES = {
   }
 };
 
+/**
+ * Coach ferocity damage multiplier by game number (Spec §5 Tuning Pass 1):
+ * Games 1-2: ×0.80, Games 3-5: ×0.85, Games 6-7: ×0.95, Game 8: ×1.00
+ */
+export function getCoachFerocityMultiplier(gameNumber = 1) {
+  if (gameNumber <= 2) return 0.8;
+  if (gameNumber <= 5) return 0.85;
+  if (gameNumber <= 7) return 0.95;
+  return 1.0;
+}
+
 export class GraveyardGridironUI {
   constructor() {
     this.sfx = new SoundBleeper();
@@ -203,12 +214,16 @@ export class GraveyardGridironUI {
 
     // Battle replay state
     this.isReplaying = false;
-    this.replaySpeedMode = 1; // 1 = normal (210ms), 2 = fast (90ms), 3 = instant (18ms)
+    this.replaySpeedMode = 1; // 1 = normal (300ms), 2 = fast (150ms), 3 = instant (18ms)
     this.driveSplats = [];
 
-    this.bindElements();
-    if (!this.loadRunFromStorage()) {
-      this.startNewRun(false);
+    if (typeof document !== 'undefined') {
+      this.bindElements();
+      if (!this.loadRunFromStorage()) {
+        this.startNewRun(false);
+      }
+    } else {
+      this.generateOpponentRoster();
     }
   }
 
@@ -705,6 +720,7 @@ export class GraveyardGridironUI {
       if (focused.length > 0) pool = focused;
     }
 
+    const ferocityMult = getCoachFerocityMultiplier(this.gameNumber);
     const desiredPositions = ['OL', 'RB', 'LB', 'DB', 'WR', 'QB', 'TE'];
     const createCoachUnit = (idx) => {
       const wantPos = desiredPositions[idx % desiredPositions.length];
@@ -713,10 +729,14 @@ export class GraveyardGridironUI {
         posMatches.length > 0
           ? this.rng.pick(posMatches)
           : this.rng.pick(pool) || ROSTER_POOL[idx % ROSTER_POOL.length];
-      return createUnit(tpl.id, {
+      const unit = createUnit(tpl.id, {
         side: 'opponent',
         stars: coach.starLevel || 1
       });
+      const scaledDmg = Math.max(1, Math.round(unit.dmg * ferocityMult));
+      unit.dmg = scaledDmg;
+      unit.baseDmg = scaledDmg;
+      return unit;
     };
 
     this.opponentField = [];
@@ -861,8 +881,8 @@ export class GraveyardGridironUI {
 
   getTickDelayMs() {
     if (this.replaySpeedMode === 3) return 18;
-    if (this.replaySpeedMode === 2) return 90;
-    return 210;
+    if (this.replaySpeedMode === 2) return 150;
+    return 300;
   }
 
   async handleSnapClick() {
@@ -1755,6 +1775,8 @@ export class GraveyardGridironUI {
   }
 }
 
-window.addEventListener('DOMContentLoaded', () => {
-  window.graveyardGame = new GraveyardGridironUI();
-});
+if (typeof window !== 'undefined') {
+  window.addEventListener('DOMContentLoaded', () => {
+    window.graveyardGame = new GraveyardGridironUI();
+  });
+}
