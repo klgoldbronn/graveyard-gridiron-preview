@@ -751,6 +751,35 @@ body {
   transform: translateY(2px);
 }
 
+#handoff-btn {
+  flex: 0 0 auto;
+  min-height: 56px;
+  height: 57px;
+  padding: 0 10px;
+  background: linear-gradient(180deg, #00e676 0%, #00897b 100%);
+  color: #0b1c14;
+  border: 2px solid #ffffff;
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  cursor: pointer;
+  box-shadow: 0 3px 0 #004d40, 0 0 8px rgba(0, 230, 118, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
+}
+
+#handoff-btn.hidden {
+  display: none !important;
+}
+
+#handoff-btn:active {
+  transform: translateY(2px);
+}
+
 #speed-btn {
   flex: 0 0 64px;
   min-height: 56px;

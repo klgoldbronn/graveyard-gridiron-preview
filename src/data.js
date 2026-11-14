@@ -277,7 +277,7 @@ export const POSITIONS = {
   DB: {
     id: 'DB',
     name: 'Interceptor',
-    range: 2,
+    range: 3,
     hpClass: 'Med',
     baseHp: 54,
     baseDmg: 6,

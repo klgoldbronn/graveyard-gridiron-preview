@@ -19,6 +19,7 @@ import {
   createUnit,
   combineStars,
   computeSynergies,
+  designateBallCarrier,
   simulateDrive,
   computeLegacyEarned,
   resolvePostGamePermadeath,
@@ -65,7 +66,7 @@ export function createDefaultMetaState() {
   };
 }
 
-export { computeLegacyEarned };
+export { computeLegacyEarned, designateBallCarrier };
 
 const SPECIES_SPLAT_ICON = {
   Skeleton: '🦴💥',
@@ -170,7 +171,11 @@ const TICKER_TEMPLATES = {
   sack: (ev) =>
     `🚨 SACKED! ${ev.attackerName} folded QB ${ev.qbName} like a wet taco (-5 yds)!`,
   catch: (ev) =>
-    `🚀 AIR MAIL! ${ev.qbName} laser-beamed ${ev.wrName} for a +15 yd Catch play!`,
+    ev.contested
+      ? `🚀 CONTESTED CATCH! ${ev.wrName} mossed ${ev.defenderName || 'coverage'} on ${ev.qbName}'s pass for +15 yds!`
+      : `🚀 AIR MAIL! ${ev.qbName} laser-beamed ${ev.wrName} for a +15 yd Catch play!`,
+  pass_breakup: (ev) =>
+    `🧤 BROKEN UP! ${ev.defenderName || 'Defender'} jarred ${ev.qbName}'s pass loose from ${ev.wrName} in tight coverage!`,
   intercept: (ev) =>
     `🧤 PICKED OFF! ${ev.dbName} mugged the air and stole ${ev.qbName}'s pass! Down over (0 yds)!`,
   mine: (ev) =>
@@ -250,6 +255,7 @@ export class GraveyardGridironUI {
     };
 
     this.selectedUnitUid = null;
+    this.carrierUid = null;
     this.lastCombineMessage = '';
 
     // Current Game (4 drives) state
@@ -303,6 +309,7 @@ export class GraveyardGridironUI {
       thermoYards: document.getElementById('thermo-yards'),
       tickerHeadline: document.getElementById('ticker-headline'),
       tickerSubline: document.getElementById('ticker-subline'),
+      handoffBtn: document.getElementById('handoff-btn'),
       snapBtn: document.getElementById('snap-btn'),
       speedBtn: document.getElementById('speed-btn'),
 
@@ -397,6 +404,12 @@ export class GraveyardGridironUI {
     this.els.autoDraftBtn.addEventListener('click', () => {
       this.quickDraftStarters();
     });
+
+    if (this.els.handoffBtn) {
+      this.els.handoffBtn.addEventListener('click', () => {
+        this.designateCarrier(this.selectedUnitUid);
+      });
+    }
 
     this.els.snapBtn.addEventListener('click', () => {
       this.handleSnapClick();
@@ -616,6 +629,7 @@ export class GraveyardGridironUI {
         teamHearts: this.teamHearts,
         fieldRoster: this.fieldRoster,
         benchRoster: this.benchRoster,
+        carrierUid: this.carrierUid,
         shopSlots: this.shopSlots,
         heldTricks: this.heldTricks,
         gameResurrectionInsuranceArmed: this.gameResurrectionInsuranceArmed,
@@ -652,6 +666,7 @@ export class GraveyardGridironUI {
       this.teamHearts = data.teamHearts ?? this.getRunStartingHearts();
       this.fieldRoster = data.fieldRoster || [];
       this.benchRoster = data.benchRoster || [];
+      this.carrierUid = data.carrierUid || null;
       this.shopSlots = data.shopSlots || [];
       this.heldTricks = data.heldTricks || [];
       this.gameResurrectionInsuranceArmed = Boolean(data.gameResurrectionInsuranceArmed);
@@ -730,6 +745,7 @@ export class GraveyardGridironUI {
     this.teamHearts = this.getRunStartingHearts();
     this.fieldRoster = [];
     this.benchRoster = [];
+    this.carrierUid = null;
     this.heldTricks = [];
     this.gameResurrectionInsuranceArmed = false;
     this.atShopBoundary = false;
@@ -1273,7 +1289,8 @@ export class GraveyardGridironUI {
       opponentUnits: this.opponentField,
       playerTricks: armedTricks,
       playerResurrectionInsurance: this.gameResurrectionInsuranceArmed,
-      opponentTricks: oppTricks
+      opponentTricks: oppTricks,
+      playerCarrierUid: this.carrierUid
     };
 
     const seed = this.seedCounter++;
@@ -1303,7 +1320,8 @@ export class GraveyardGridironUI {
       opponentUnits: this.opponentField,
       playerTricks: armedTricks,
       playerResurrectionInsurance: this.gameResurrectionInsuranceArmed,
-      opponentTricks: oppTricks
+      opponentTricks: oppTricks,
+      playerCarrierUid: this.carrierUid
     };
     const initialSnapCoords = new Map();
     for (const u of this.fieldRoster) {
@@ -1345,7 +1363,11 @@ export class GraveyardGridironUI {
           this.currentDownDisplay = currentDown;
           for (const [uid, unit] of liveUnits.entries()) {
             if (!unit.alive) continue;
-            const startPos = initialSnapCoords.get(uid);
+            const downStart =
+              tickRec.startPositions ||
+              simResult.downs.find((d) => d.down === currentDown)?.startPositions ||
+              null;
+            const startPos = (downStart && downStart[uid]) || initialSnapCoords.get(uid);
             if (startPos) {
               unit.row = startPos.row;
               unit.col = startPos.col;
@@ -1407,6 +1429,8 @@ export class GraveyardGridironUI {
             notableEventForTicker = TICKER_TEMPLATES.sack(ev);
           } else if (ev.type === 'catch') {
             notableEventForTicker = TICKER_TEMPLATES.catch(ev);
+          } else if (ev.type === 'pass_breakup') {
+            notableEventForTicker = TICKER_TEMPLATES.pass_breakup(ev);
           } else if (ev.type === 'intercept') {
             notableEventForTicker = TICKER_TEMPLATES.intercept(ev);
           } else if (ev.type === 'resurrection_insurance') {
@@ -2088,10 +2112,7 @@ export class GraveyardGridironUI {
     if (!this.els) return;
     const allUnits = Array.from(liveUnitsMap.values());
     const playerLiving = allUnits.filter((u) => u.side === 'player' && u.alive && u.hp > 0);
-    const carrier =
-      playerLiving.find((u) => u.position === 'RB') ||
-      playerLiving.find((u) => u.position === 'QB') ||
-      playerLiving[0];
+    const carrier = designateBallCarrier(playerLiving, this.carrierUid);
     const carrierUid = carrier ? carrier.uid : null;
 
     const cellsHtml = [];
@@ -2291,6 +2312,45 @@ export class GraveyardGridironUI {
     });
   }
 
+  /**
+   * Current ball carrier uid via the SAME shared helper the sim uses (§5 Tuning Pass 2 carrier choice).
+   */
+  getCurrentCarrierUid() {
+    const carrier = designateBallCarrier(
+      this.fieldRoster.filter((u) => u.alive !== false && (u.hp === undefined || u.hp > 0)),
+      this.carrierUid
+    );
+    return carrier ? carrier.uid : null;
+  }
+
+  /**
+   * Designate a fielded player unit as the ball carrier (🏈 HAND OFF).
+   */
+  designateCarrier(uid) {
+    if (this.isReplaying || !uid) return false;
+    const unit = this.fieldRoster.find((u) => u.uid === uid);
+    if (!unit) return false;
+    this.carrierUid = uid;
+    this.selectedUnitUid = null;
+    this.sfx.play('buy');
+    this.setTicker(
+      `🏈 HANDOFF! ${unit.name} (${unit.species} ${unit.position}) is now your Ball Carrier!`,
+      'If the carrier dies mid-drive the ball is fumbled. Press SNAP when ready!'
+    );
+    this.saveRunToStorage();
+    this.renderAll();
+    return true;
+  }
+
+  renderHandoffButton() {
+    if (!this.els?.handoffBtn) return;
+    const selectedOnField =
+      this.selectedUnitUid && this.fieldRoster.some((u) => u.uid === this.selectedUnitUid);
+    const show =
+      !this.isReplaying && selectedOnField && this.selectedUnitUid !== this.getCurrentCarrierUid();
+    this.els.handoffBtn.classList.toggle('hidden', !show);
+  }
+
   renderAll() {
     if (!this.els) return;
     this.renderHud();
@@ -2304,6 +2364,7 @@ export class GraveyardGridironUI {
     this.renderFieldFromLiveUnits(liveMap, {});
 
     this.els.snapBtn.disabled = this.isReplaying;
+    this.renderHandoffButton();
     const armedCount = this.heldTricks.filter((t) => t.armed).length;
     const trickTag = armedCount > 0 ? ` [${armedCount} TRICK ARMED]` : '';
     this.els.snapBtn.textContent = this.isReplaying

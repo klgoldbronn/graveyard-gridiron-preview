@@ -274,9 +274,13 @@ function isAdjacent(a, b) {
   return Math.abs(a.row - b.row) <= 1 && Math.abs(a.col - b.col) <= 1;
 }
 
-function designateBallCarrier(playerUnits) {
-  const living = playerUnits.filter((u) => u.alive && u.hp > 0);
+export function designateBallCarrier(playerUnits, preferredCarrierUid = null) {
+  const living = (playerUnits || []).filter((u) => u && u.alive !== false && (u.hp === undefined || u.hp > 0));
   if (living.length === 0) return null;
+  if (preferredCarrierUid) {
+    const preferred = living.find((u) => u.uid === preferredCarrierUid);
+    if (preferred) return preferred;
+  }
   const rb = living.find((u) => u.position === 'RB');
   if (rb) return rb;
   const qb = living.find((u) => u.position === 'QB');
@@ -284,7 +288,7 @@ function designateBallCarrier(playerUnits) {
   return living[0];
 }
 
-function selectTarget(unit, enemies) {
+export function selectTarget(unit, enemies) {
   const livingEnemies = enemies.filter((e) => e.alive && e.hp > 0);
   if (livingEnemies.length === 0) return null;
 
@@ -297,6 +301,12 @@ function selectTarget(unit, enemies) {
     return adjacentOls[0];
   }
 
+  // §5 Tuning Pass 2: In-range target preference (all units)
+  // Filter to enemies within attack range first; only chase out-of-range enemies when none are in range.
+  const unitRange = unit.range || 1;
+  const inRangeEnemies = livingEnemies.filter((e) => manhattan(unit, e) <= unitRange);
+  const candidatePool = inRangeEnemies.length > 0 ? inRangeEnemies : livingEnemies;
+
   const byNearest = (a, b) =>
     manhattan(unit, a) - manhattan(unit, b) ||
     a.hp - b.hp ||
@@ -306,7 +316,7 @@ function selectTarget(unit, enemies) {
   switch (unit.position) {
     case 'QB': {
       // Furthest enemy (prioritize DB/LB among furthest)
-      const sorted = [...livingEnemies].sort((a, b) => {
+      const sorted = [...candidatePool].sort((a, b) => {
         const dDiff = manhattan(unit, b) - manhattan(unit, a);
         if (dDiff !== 0) return dDiff;
         const aPri = a.position === 'DB' || a.position === 'LB' ? 1 : 0;
@@ -318,14 +328,14 @@ function selectTarget(unit, enemies) {
     }
     case 'WR': {
       // Lowest-HP enemy
-      const sorted = [...livingEnemies].sort(
+      const sorted = [...candidatePool].sort(
         (a, b) => a.hp - b.hp || manhattan(unit, a) - manhattan(unit, b) || a.col - b.col
       );
       return sorted[0];
     }
     case 'LB': {
       // Enemy RB/QB first
-      const priority = livingEnemies.filter(
+      const priority = candidatePool.filter(
         (e) => e.position === 'RB' || e.position === 'QB'
       );
       if (priority.length > 0) {
@@ -337,11 +347,11 @@ function selectTarget(unit, enemies) {
         });
         return priority[0];
       }
-      return [...livingEnemies].sort(byNearest)[0];
+      return [...candidatePool].sort(byNearest)[0];
     }
     case 'DB': {
       // Enemy QB/WR first
-      const priority = livingEnemies.filter(
+      const priority = candidatePool.filter(
         (e) => e.position === 'QB' || e.position === 'WR'
       );
       if (priority.length > 0) {
@@ -353,13 +363,110 @@ function selectTarget(unit, enemies) {
         });
         return priority[0];
       }
-      return [...livingEnemies].sort(byNearest)[0];
+      return [...candidatePool].sort(byNearest)[0];
     }
     case 'RB':
     case 'OL':
     case 'TE':
     default:
-      return [...livingEnemies].sort(byNearest)[0];
+      return [...candidatePool].sort(byNearest)[0];
+  }
+}
+
+/**
+ * §5 Tuning Pass 2 — Down-start opponent positioning (after formation reset):
+ * 1. Coverage starts up: Each living opponent DB is matched to a distinct living player WR (nearest first)
+ *    and starts the down at row 4 in that WR's lane if free (else nearest free row-4 cell, else its formation slot).
+ * 2. Second-level pursuit: Any living opponent LB or DB who would start at row 5 in a lane (column) with
+ *    no living opponent unit at row 4 steps up to that lane's free row-4 cell (or nearest free row-4 cell if taken).
+ */
+export function applyDownStartPositioning(playerUnits, opponentUnits, formationCoords = null) {
+  const livingPlayers = (playerUnits || []).filter((u) => u.alive && u.hp > 0);
+  const livingOpponents = (opponentUnits || []).filter((u) => u.alive && u.hp > 0);
+  const allLiving = [...livingPlayers, ...livingOpponents];
+
+  // Record which columns had a living opponent at row 4 right after formation reset
+  const initialRow4OppCols = new Set(
+    livingOpponents.filter((u) => u.row === 4).map((u) => u.col)
+  );
+
+  const isRow4ColFree = (col, ignoreUid = null) =>
+    !allLiving.some((u) => u.uid !== ignoreUid && u.row === 4 && u.col === col);
+
+  const findNearestFreeRow4Col = (preferredCol, tieBreakCol = preferredCol, ignoreUid = null) => {
+    const cols = [0, 1, 2, 3, 4].filter((c) => isRow4ColFree(c, ignoreUid));
+    if (cols.length === 0) return null;
+    cols.sort(
+      (a, b) =>
+        Math.abs(a - preferredCol) - Math.abs(b - preferredCol) ||
+        Math.abs(a - tieBreakCol) - Math.abs(b - tieBreakCol) ||
+        a - b
+    );
+    return cols[0];
+  };
+
+  // 1. Coverage starts up: match each opponent DB to a distinct player WR (nearest first)
+  const unmatchedDbs = livingOpponents.filter((u) => u.position === 'DB');
+  const unmatchedWrs = livingPlayers.filter((u) => u.position === 'WR');
+
+  while (unmatchedDbs.length > 0 && unmatchedWrs.length > 0) {
+    let bestDbIdx = 0;
+    let bestWrIdx = 0;
+    let bestScore = Infinity;
+
+    for (let di = 0; di < unmatchedDbs.length; di++) {
+      const db = unmatchedDbs[di];
+      for (let wi = 0; wi < unmatchedWrs.length; wi++) {
+        const wr = unmatchedWrs[wi];
+        const dist = manhattan(db, wr);
+        const colDiff = Math.abs(db.col - wr.col);
+        const score = dist * 100 + colDiff * 10 + wr.col;
+        if (score < bestScore) {
+          bestScore = score;
+          bestDbIdx = di;
+          bestWrIdx = wi;
+        }
+      }
+    }
+
+    const [db] = unmatchedDbs.splice(bestDbIdx, 1);
+    const [wr] = unmatchedWrs.splice(bestWrIdx, 1);
+    const dbStartCol = formationCoords?.get(db.uid)?.col ?? db.col;
+
+    if (isRow4ColFree(wr.col, db.uid)) {
+      db.row = 4;
+      db.col = wr.col;
+    } else {
+      const freeCol = findNearestFreeRow4Col(wr.col, dbStartCol, db.uid);
+      if (freeCol !== null) {
+        db.row = 4;
+        db.col = freeCol;
+      }
+    }
+  }
+
+  // 2. Second-level pursuit: any opponent LB or DB still at row 5 in a lane with no living row-4 opponent
+  const row5Pursuers = livingOpponents.filter(
+    (u) => (u.position === 'LB' || u.position === 'DB') && u.row === 5
+  );
+
+  for (const unit of row5Pursuers) {
+    const laneCol = formationCoords?.get(unit.uid)?.col ?? unit.col;
+    const laneHadNoRow4AtReset = !initialRow4OppCols.has(laneCol);
+    const laneHasNoRow4Now = isRow4ColFree(laneCol, unit.uid);
+
+    if (laneHadNoRow4AtReset || laneHasNoRow4Now) {
+      if (isRow4ColFree(laneCol, unit.uid)) {
+        unit.row = 4;
+        unit.col = laneCol;
+      } else {
+        const freeCol = findNearestFreeRow4Col(laneCol, laneCol, unit.uid);
+        if (freeCol !== null) {
+          unit.row = 4;
+          unit.col = freeCol;
+        }
+      }
+    }
   }
 }
 
@@ -472,15 +579,17 @@ export function simulateDrive(state, rngSeed = 1) {
   const playerTricks = normalizeTricks(state.playerTricks || state.tricks?.player);
   const opponentTricks = normalizeTricks(state.opponentTricks || state.tricks?.opponent);
 
+  const preferredCarrierUid = state.playerCarrierUid ?? state.carrierUid ?? null;
+
   // Apply Steroid Slushie (+50% HP/dmg this game, dies after game) if passed via trick flags
-  const applySlushieIfArmed = (units, armed, targetUid) => {
+  const applySlushieIfArmed = (units, armed, targetUid, preferredUid = null) => {
     if (!armed) return null;
     if (units.some((u) => u.steroidSlushie)) {
       return units.find((u) => u.steroidSlushie);
     }
     const target =
       (targetUid && units.find((u) => u.uid === targetUid && u.alive)) ||
-      designateBallCarrier(units) ||
+      designateBallCarrier(units, preferredUid) ||
       units.find((u) => u.alive);
     if (target) {
       const mult = DIRTY_TRICKS.steroid_slushie.statMult;
@@ -497,12 +606,14 @@ export function simulateDrive(state, rngSeed = 1) {
   const playerSlushieUnit = applySlushieIfArmed(
     rawPlayerUnits,
     playerTricks.steroidSlushie,
-    state.steroidSlushieTargetUid
+    state.steroidSlushieTargetUid,
+    preferredCarrierUid
   );
   const opponentSlushieUnit = applySlushieIfArmed(
     rawOpponentUnits,
     opponentTricks.steroidSlushie,
-    state.opponentSteroidSlushieTargetUid
+    state.opponentSteroidSlushieTargetUid,
+    null
   );
 
   // Track Resurrection Insurance availability (fires at most once per game/drive)
@@ -585,6 +696,7 @@ export function simulateDrive(state, rngSeed = 1) {
           : 'MASSACRE! The opposing team has zero living bodies! Automatic Touchdown!'
     });
 
+    const earlyCarrier = designateBallCarrier(rawPlayerUnits, preferredCarrierUid);
     return {
       ticks,
       downs,
@@ -592,6 +704,7 @@ export function simulateDrive(state, rngSeed = 1) {
       points: drivePoints,
       opponentPoints: wipedSide === 'player' ? 14 : 0,
       outcome: driveOutcome,
+      carrierUid: earlyCarrier ? earlyCarrier.uid : null,
       massacre: true,
       wipedSide,
       deaths,
@@ -604,8 +717,8 @@ export function simulateDrive(state, rngSeed = 1) {
     };
   }
 
-  // Designate Ball Carrier for the drive (§4: RB first, else QB, else first living)
-  const carrierUnit = designateBallCarrier(rawPlayerUnits);
+  // Designate Ball Carrier for the drive (§4 & §5 Tuning Pass 2: playerCarrierUid override if fielded & alive, else RB -> QB -> first living)
+  const carrierUnit = designateBallCarrier(rawPlayerUnits, preferredCarrierUid);
   const carrierUid = carrierUnit ? carrierUnit.uid : null;
 
   // Bloodlust timers (in ticks)
@@ -846,9 +959,21 @@ export function simulateDrive(state, rngSeed = 1) {
       u.poisonStacks = [];
     }
 
+    // §5 Tuning Pass 2: Coverage starts up (opponent DBs match WRs at row 4) + Second-level pursuit (row-5 LB/DB step up to free row 4)
+    applyDownStartPositioning(rawPlayerUnits, rawOpponentUnits, formationCoords);
+
+    const downStartPositions = {};
+    for (const u of allUnits) {
+      if (u.alive && u.hp > 0) {
+        downStartPositions[u.uid] = { row: u.row, col: u.col };
+      }
+    }
+
     const downEvents = [];
     let carrierCrossedScrimmage = false;
     let wrCatchTriggered = false;
+    let wrCatchContested = false;
+    let wrCatchBrokenUp = false;
     let carrierTackledForLoss = false;
     let qbSacked = false;
     let downIntercepted = false;
@@ -1065,7 +1190,11 @@ export function simulateDrive(state, rngSeed = 1) {
               const unmarkedWr = friendlyWrs.find(
                 (wr) => !enemies.some((e) => manhattan(wr, e) <= 1)
               );
-              if (unmarkedWr) {
+              const targetWr = unmarkedWr || friendlyWrs[0];
+              const contestingDefender = enemies.find((e) => manhattan(targetWr, e) <= 1) || null;
+
+              if (!contestingDefender) {
+                // Unmarked WR: automatic catch as before
                 wrCatchTriggered = true;
                 const catchEv = {
                   type: 'catch',
@@ -1073,14 +1202,61 @@ export function simulateDrive(state, rngSeed = 1) {
                   tick: tickNum,
                   qbId: unit.uid,
                   qbName: unit.name,
-                  wrId: unmarkedWr.uid,
-                  wrName: unmarkedWr.name,
+                  wrId: targetWr.uid,
+                  wrName: targetWr.name,
+                  contested: false,
+                  brokenUp: false,
                   yardsBonus: 15,
-                  text: `BOMB COMPLETE! ${unit.name} hit an wide-open ${unmarkedWr.name} in stride for a +15 yd Catch play!`
+                  text: `BOMB COMPLETE! ${unit.name} hit an wide-open ${targetWr.name} in stride for a +15 yd Catch play!`
                 };
                 events.push(catchEv);
                 downEvents.push(catchEv);
                 tickEvents.push(catchEv);
+              } else {
+                // §5 Tuning Pass 2: Contested catch (enemy within Manhattan 1 of targeted WR at tick 3)
+                // 50% broken up (no +15, ticker logs "BROKEN UP!"), 50% completed anyway (+15 yards)
+                wrCatchContested = true;
+                if (rng.chance(0.5)) {
+                  wrCatchBrokenUp = true;
+                  const breakupEv = {
+                    type: 'pass_breakup',
+                    down: downNum,
+                    tick: tickNum,
+                    qbId: unit.uid,
+                    qbName: unit.name,
+                    wrId: targetWr.uid,
+                    wrName: targetWr.name,
+                    defenderId: contestingDefender.uid,
+                    defenderName: contestingDefender.name,
+                    contested: true,
+                    brokenUp: true,
+                    yardsBonus: 0,
+                    text: `BROKEN UP! ${contestingDefender.name} jarred the pass loose from ${targetWr.name} in tight coverage!`
+                  };
+                  events.push(breakupEv);
+                  downEvents.push(breakupEv);
+                  tickEvents.push(breakupEv);
+                } else {
+                  wrCatchTriggered = true;
+                  const catchEv = {
+                    type: 'catch',
+                    down: downNum,
+                    tick: tickNum,
+                    qbId: unit.uid,
+                    qbName: unit.name,
+                    wrId: targetWr.uid,
+                    wrName: targetWr.name,
+                    defenderId: contestingDefender.uid,
+                    defenderName: contestingDefender.name,
+                    contested: true,
+                    brokenUp: false,
+                    yardsBonus: 15,
+                    text: `CONTESTED CATCH! ${targetWr.name} mossed ${contestingDefender.name} in traffic for a +15 yd Catch play!`
+                  };
+                  events.push(catchEv);
+                  downEvents.push(catchEv);
+                  tickEvents.push(catchEv);
+                }
               }
             }
           }
@@ -1445,6 +1621,7 @@ export function simulateDrive(state, rngSeed = 1) {
       ticks.push({
         down: downNum,
         tick: tickNum,
+        startPositions: tickNum === 1 ? downStartPositions : undefined,
         playerAliveStart: livingPlayersStart.length,
         opponentAliveStart: livingOpponentsStart.length,
         playerAliveEnd: getLiving(rawPlayerUnits).length,
@@ -1479,6 +1656,7 @@ export function simulateDrive(state, rngSeed = 1) {
         rawYards: 0,
         cumulativeYards: driveYards,
         outcome: driveOutcome,
+        startPositions: downStartPositions,
         events: downEvents
       });
       break;
@@ -1558,6 +1736,8 @@ export function simulateDrive(state, rngSeed = 1) {
       carrierAliveAtEnd,
       carrierCrossedScrimmage,
       wrCatchTriggered: wrCatchTriggered && qbAliveAtEnd,
+      wrCatchContested,
+      wrCatchBrokenUp,
       carrierTackledForLoss,
       qbSacked,
       downIntercepted,
@@ -1575,9 +1755,12 @@ export function simulateDrive(state, rngSeed = 1) {
       carrierAliveAtEnd,
       carrierCrossedScrimmage,
       wrCatch: wrCatchTriggered && qbAliveAtEnd,
+      wrCatchContested,
+      wrCatchBrokenUp,
       carrierTackledForLoss,
       qbSacked,
       intercepted: downIntercepted,
+      startPositions: downStartPositions,
       events: downEvents
     });
 
@@ -1671,6 +1854,7 @@ export function simulateDrive(state, rngSeed = 1) {
     points: drivePoints,
     opponentPoints,
     outcome: driveOutcome,
+    carrierUid,
     massacre,
     wipedSide,
     deaths,
