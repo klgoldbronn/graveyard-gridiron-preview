@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Graveyard Gridiron</title>
+  <link rel="stylesheet" href="./src/styles.css" />
+</head>
+<body>
+  <div id="app-shell">
+    <!-- 1. Top Scoreboard / HUD Bar (50px) -->
+    <header id="hud-bar">
+      <div class="hud-left">
+        <div class="hud-title-row">
+          <span id="hud-game-badge" class="game-badge">G1/8</span>
+          <span id="hud-coach-name" class="coach-name">Coach Bones</span>
+        </div>
+        <div id="hud-drive-down" class="hud-sub">DRV 1/4 • DWN 1/4</div>
+      </div>
+
+      <div class="hud-score-box">
+        <div id="hud-score-numbers" class="score-numbers">0 - 0</div>
+        <div class="score-sub">YOU vs THEM</div>
+      </div>
+
+      <div class="hud-right">
+        <span id="hud-gold" class="stat-pill">💰10g</span>
+        <span id="hud-hearts" class="stat-pill">❤️❤️❤️</span>
+        <button id="mute-btn" type="button" class="hud-btn" title="Toggle WebAudio SFX">🔊</button>
+        <button id="open-shop-btn" type="button" class="hud-btn">🛒 SHOP</button>
+        <button id="reset-run-btn" type="button" class="hud-btn danger-btn" title="Hard Reset Run">↺</button>
+      </div>
+    </header>
+
+    <!-- 2. Compact Bench, Dirty Tricks Arming & Active Synergies Bar (46px) -->
+    <section id="bench-strip" aria-label="Bench, Dirty Tricks, and Synergies">
+      <div id="bench-slots-row" class="bench-slots-row"></div>
+      <div id="tricks-arm-row" class="tricks-arm-row"></div>
+      <div id="synergy-pills" class="synergy-pills"></div>
+    </section>
+
+    <!-- 3. Main Vertical Field (5x6) + Top Endzone + Side Yardage Thermometer -->
+    <main id="arena-container">
+      <div id="field-column">
+        <div id="endzone-top">▲ TOUCHDOWN ENDZONE (80 YDS) ▲</div>
+        <div id="field-grid" role="grid" aria-label="5 by 6 Football Battle Grid"></div>
+      </div>
+
+      <aside id="yard-thermometer" aria-label="Yardage Thermometer">
+        <div class="thermo-label-top">TD<br />80y</div>
+        <div class="thermo-track">
+          <div class="thermo-fg-line"></div>
+          <span class="thermo-fg-tag">FG 50</span>
+          <div id="thermo-fill" class="thermo-fill"></div>
+        </div>
+        <div id="thermo-yards" class="thermo-yards-readout">0y</div>
+      </aside>
+    </main>
+
+    <!-- 4. Procedural Comedy Commentary Ticker (64px) -->
+    <section id="commentary-ticker" aria-live="polite">
+      <div id="ticker-headline" class="ticker-headline">
+        🏟️ Welcome to GRAVEYARD GRIDIRON! Tap a player &amp; tap rows 0-2 to place formation, then hit SNAP!
+      </div>
+      <div id="ticker-subline" class="ticker-subline">
+        Draft mutants. Watch 'em kill for yardage. Bury 'em. Draft more.
+      </div>
+    </section>
+
+    <!-- 5. Big Touch-First SNAP Button (>=56px) + Replay Speed Toggle (68px) -->
+    <footer id="action-bar">
+      <button id="snap-btn" type="button">🏈 SNAP! (DRV 1/4)</button>
+      <button id="speed-btn" type="button" title="Toggle Battle Replay Speed">1x SPD</button>
+    </footer>
+
+    <!-- Modal 1: Shop Phase (5 player slots, Dirty Tricks shop, bench sell, auto star-combine, Hard Reset Run) -->
+    <section id="shop-modal" class="modal-overlay hidden" aria-label="Mutant Draft Shop">
+      <div class="modal-header">
+        <div class="modal-title">🛒 MUTANT SHOP (G<span id="shop-game-num">1</span>/8)</div>
+        <div style="display: flex; align-items: center; gap: 6px;">
+          <span id="shop-gold" class="stat-pill">💰 10g</span>
+          <button id="shop-reset-run-btn" type="button" class="hud-btn danger-btn">↺ Reset Run</button>
+          <button id="close-shop-btn" type="button" class="hud-btn">🏈 TO FIELD</button>
+        </div>
+      </div>
+
+      <div id="combine-banner" class="combine-banner hidden"></div>
+
+      <div class="shop-Section-title">
+        <span>5-Card Draft Pool (Includes TE • 3x = Auto ★★)</span>
+        <div style="display: flex; gap: 6px;">
+          <button id="shop-autodraft-btn" type="button" class="hud-btn">⚡ Auto-Buy</button>
+          <button id="shop-reroll-btn" type="button" class="hud-btn">🎲 Reroll (2g)</button>
+        </div>
+      </div>
+      <div id="shop-cards-grid" class="shop-cards-grid"></div>
+
+      <div class="shop-Section-title" style="margin-top: 10px;">
+        <span>🧨 Dirty Tricks Shop (Hold max 3 • Tap on field to arm)</span>
+        <span id="shop-tricks-count" style="font-size: 11px; color: var(--neon-yellow);">Held: 0/3</span>
+      </div>
+      <div id="shop-tricks-grid" class="shop-cards-grid"></div>
+
+      <div class="shop-Section-title" style="margin-top: 10px;">
+        <span>Your Roster (Sell Benched for +1g)</span>
+        <span id="shop-field-count" style="font-size: 11px; color: var(--neon-yellow);">Fielded: 0/5</span>
+      </div>
+      <div id="shop-roster-list" class="shop-roster-list"></div>
+
+      <button type="button" class="primary-modal-btn" onclick="document.getElementById('close-shop-btn').click()">
+        🏈 PLACE FORMATION &amp; PLAY DRIVE ➡️
+      </button>
+    </section>
+
+    <!-- Modal 2: Post-Game Result Screen (after 4 drives) -->
+    <section id="result-modal" class="modal-overlay hidden" aria-label="Game Result">
+      <div class="modal-header">
+        <div class="modal-title">🏟️ FINAL GAME SCOREBOARD</div>
+      </div>
+      <div id="result-content"></div>
+      <button id="to-graveyard-btn" type="button" class="primary-modal-btn">
+        🪦 VISIT THE GRAVEYARD (BURY THE DEAD) ➡️
+      </button>
+    </section>
+
+    <!-- Modal 3: The Graveyard Screen (Tombstone per death) -->
+    <section id="graveyard-modal" class="modal-overlay hidden" aria-label="The Graveyard">
+      <div class="modal-header">
+        <div class="modal-title">🪦 THE BONEYARD MEMORIAL</div>
+      </div>
+      <div id="reassemble-banner" class="combine-banner hidden"></div>
+      <div id="tombstone-grid" class="tombstone-grid"></div>
+      <button id="next-game-shop-btn" type="button" class="primary-modal-btn">
+        🛒 CONTINUE GAUNTLET ➡️
+      </button>
+    </section>
+
+    <!-- Modal 4: Graveyard Cup Victory / Run Summary Screen (Game 8 Win, 3 Losses, or Full Roster+Gold Wipe) -->
+    <section id="run-summary-modal" class="modal-overlay hidden" aria-label="Run Summary">
+      <div class="modal-header">
+        <div id="run-summary-title" class="modal-title">🏆 GRAVEYARD CUP — RUN SUMMARY</div>
+      </div>
+      <div id="run-summary-content"></div>
+      <button id="new-run-btn" type="button" class="primary-modal-btn">
+        🔄 START NEW GAUNTLET RUN (10g)
+      </button>
+    </section>
+  </div>
+
+  <script type="module" src="./src/ui.js"></script>
+</body>
+</html>

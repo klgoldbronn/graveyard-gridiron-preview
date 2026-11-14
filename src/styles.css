@@ -1,0 +1,984 @@
+/* Graveyard Gridiron v1 — Styles (Spec §4, §11)
+   Portrait-first (393x852 iPhone target): Field + Ticker + SNAP (>=56px) fit WITHOUT scrolling during a drive.
+   90s Sega cartoon gross-out aesthetic: toxic green turf, purple sky, neon yellow lines, cartoon red splats. */
+
+:root {
+  --sky-purple: #1b0c2e;
+  --sky-purple-mid: #2d144b;
+  --turf-toxic: #1f6b1d;
+  --turf-toxic-alt: #267d23;
+  --turf-scrimmage: #318f29;
+  --endzone-bg: #3b0d54;
+  --neon-yellow: #ffe600;
+  --neon-green: #76ff03;
+  --cartoon-red: #ff1744;
+  --splat-red: #d50000;
+  --bone-white: #f4f1ea;
+  --panel-dark: #140924;
+  --panel-border: #4a2373;
+  --text-light: #ffffff;
+  --text-muted: #cbb8e3;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  background-color: #0d0517;
+  color: var(--text-light);
+  font-family: 'Trebuchet MS', 'Impact', 'Arial Black', system-ui, sans-serif;
+  overflow: hidden;
+  user-select: none;
+}
+
+/* App Shell — Centered portrait column on desktop/iPad, full-bleed on phone */
+#app-shell {
+  width: 100%;
+  max-width: 460px;
+  height: 100dvh;
+  max-height: 100vh;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  background: linear-gradient(180deg, var(--sky-purple) 0%, var(--sky-purple-mid) 35%, #130821 100%);
+  border-left: 2px solid var(--panel-border);
+  border-right: 2px solid var(--panel-border);
+  position: relative;
+  overflow: hidden;
+}
+
+/* 1. Top Scoreboard / HUD Bar (~50px) */
+#hud-bar {
+  flex: 0 0 auto;
+  height: 50px;
+  background: var(--panel-dark);
+  border-bottom: 3px solid var(--neon-yellow);
+  padding: 4px 6px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+}
+
+.hud-left {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.1;
+  min-width: 0;
+}
+
+.hud-title-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.game-badge {
+  background: var(--cartoon-red);
+  color: #fff;
+  font-weight: 900;
+  font-size: 10px;
+  padding: 1px 4px;
+  border-radius: 4px;
+  border: 1px solid #fff;
+  letter-spacing: 0.3px;
+  flex-shrink: 0;
+}
+
+.coach-name {
+  font-size: 11px;
+  font-weight: 800;
+  color: var(--neon-yellow);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 98px;
+}
+
+.hud-sub {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.hud-score-box {
+  background: #090312;
+  border: 2px solid var(--neon-green);
+  border-radius: 6px;
+  padding: 2px 6px;
+  text-align: center;
+  min-width: 80px;
+  flex-shrink: 0;
+}
+
+.score-numbers {
+  font-size: 14px;
+  font-weight: 900;
+  color: var(--neon-green);
+  letter-spacing: 0.5px;
+}
+
+.score-sub {
+  font-size: 8px;
+  color: var(--neon-yellow);
+  text-transform: uppercase;
+  font-weight: 800;
+}
+
+.hud-right {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.stat-pill {
+  background: #25113d;
+  border: 1px solid #6b3fa0;
+  border-radius: 5px;
+  padding: 2px 5px;
+  font-size: 11px;
+  font-weight: 900;
+  color: var(--neon-yellow);
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  white-space: nowrap;
+}
+
+.hud-btn {
+  background: #3b1763;
+  color: var(--neon-yellow);
+  border: 2px solid var(--neon-yellow);
+  border-radius: 6px;
+  padding: 3px 5px;
+  font-size: 10px;
+  font-weight: 900;
+  cursor: pointer;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.hud-btn.danger-btn {
+  background: #4a0e1e;
+  border-color: var(--cartoon-red);
+  color: #ff9e9e;
+}
+
+.hud-btn:active {
+  transform: scale(0.95);
+}
+
+/* 2. Compact Synergy, Dirty Tricks & Bench Bar (~46px) */
+#bench-strip {
+  flex: 0 0 auto;
+  height: 46px;
+  background: #180b2b;
+  border-bottom: 2px solid #411e6b;
+  padding: 3px 6px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 5px;
+  overflow-x: auto;
+}
+
+.bench-slots-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  overflow-x: auto;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.tricks-arm-row {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 0;
+}
+
+.trick-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  background: #331028;
+  border: 2px solid #ff9100;
+  border-radius: 6px;
+  padding: 2px 5px;
+  font-size: 10px;
+  font-weight: 900;
+  color: #ffea00;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.trick-chip.armed {
+  background: #ff9100;
+  border-color: #ffffff;
+  color: #160526;
+  box-shadow: 0 0 8px var(--neon-yellow);
+}
+
+.bench-label {
+  font-size: 10px;
+  font-weight: 800;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  margin-right: 2px;
+  white-space: nowrap;
+}
+
+.bench-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  background: #2a1447;
+  border: 2px solid #7546a8;
+  border-radius: 6px;
+  padding: 2px 6px;
+  font-size: 11px;
+  font-weight: 800;
+  color: #fff;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.bench-chip.selected {
+  border-color: var(--neon-yellow);
+  background: #4e2282;
+  box-shadow: 0 0 8px var(--neon-yellow);
+}
+
+.synergy-pills {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 0;
+}
+
+.syn-badge {
+  font-size: 10px;
+  font-weight: 900;
+  padding: 2px 5px;
+  border-radius: 4px;
+  background: #231138;
+  border: 1px solid #573280;
+  color: #ddd;
+  white-space: nowrap;
+}
+
+.syn-badge.active-2 {
+  background: #1b4d20;
+  border-color: var(--neon-green);
+  color: var(--neon-green);
+}
+
+.syn-badge.active-4 {
+  background: #5c1349;
+  border-color: var(--neon-yellow);
+  color: var(--neon-yellow);
+}
+
+/* 3. Main Arena: Vertical 5x6 Field + Side Yardage Thermometer (flex: 1, min-height: 0) */
+#arena-container {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 4px 6px;
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+}
+
+#field-column {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  border: 3px solid var(--neon-yellow);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--turf-toxic);
+  box-shadow: inset 0 0 18px rgba(0, 0, 0, 0.55);
+}
+
+#endzone-top {
+  flex: 0 0 24px;
+  background: repeating-linear-gradient(
+    -45deg,
+    var(--endzone-bg),
+    var(--endzone-bg) 10px,
+    #521575 10px,
+    #521575 20px
+  );
+  border-bottom: 3px solid var(--neon-yellow);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 1.2px;
+  color: var(--neon-yellow);
+  text-shadow: 1px 1px 0 #000;
+}
+
+/* 5 columns x 6 rows grid */
+#field-grid {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  grid-template-rows: repeat(6, 1fr);
+  position: relative;
+}
+
+.field-cell {
+  position: relative;
+  border-right: 1px dashed rgba(255, 230, 0, 0.35);
+  border-bottom: 1px solid rgba(255, 230, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
+  overflow: hidden;
+}
+
+.field-cell:nth-child(5n) {
+  border-right: none;
+}
+
+/* Row visual styling (top-to-bottom: row 5, 4, 3, 2, 1, 0) */
+.field-cell[data-row="5"],
+.field-cell[data-row="3"],
+.field-cell[data-row="1"] {
+  background-color: var(--turf-toxic-alt);
+}
+
+.field-cell[data-row="4"],
+.field-cell[data-row="2"],
+.field-cell[data-row="0"] {
+  background-color: var(--turf-toxic);
+}
+
+/* Line of Scrimmage (Row 3) */
+.field-cell[data-row="3"] {
+  border-bottom: 3px solid var(--neon-yellow);
+  background-color: var(--turf-scrimmage);
+}
+
+/* Player placement cells (rows 0-2) */
+.field-cell.player-zone.placeable {
+  cursor: pointer;
+}
+
+.field-cell.player-zone.placeable:hover {
+  background-color: rgba(118, 255, 3, 0.22);
+}
+
+.field-cell.player-zone.highlight-target {
+  box-shadow: inset 0 0 0 2px var(--neon-yellow);
+  background-color: rgba(255, 230, 0, 0.16);
+}
+
+.cell-coord-hint {
+  position: absolute;
+  bottom: 1px;
+  right: 3px;
+  font-size: 8px;
+  color: rgba(255, 255, 255, 0.28);
+  pointer-events: none;
+}
+
+.scrimmage-tag {
+  position: absolute;
+  top: 1px;
+  left: 3px;
+  font-size: 8px;
+  font-weight: 900;
+  color: rgba(255, 230, 0, 0.65);
+  pointer-events: none;
+}
+
+/* Persistent Drive Splat Decals (§11) */
+.splat-decal {
+  position: absolute;
+  inset: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  opacity: 0.72;
+  pointer-events: none;
+  z-index: 1;
+  filter: drop-shadow(0 0 3px var(--splat-red));
+}
+
+.mine-marker {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  font-size: 12px;
+  z-index: 2;
+  pointer-events: none;
+}
+
+/* Player & Opponent Unit Tokens on the Grid (§11) */
+.unit-token {
+  position: relative;
+  z-index: 3;
+  width: 100%;
+  height: 100%;
+  max-height: 76px;
+  border-radius: 7px;
+  border: 2px solid #fff;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  padding: 2px 2px;
+  cursor: pointer;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.65);
+  transition: transform 0.14s ease, box-shadow 0.14s ease;
+}
+
+.unit-token.side-player {
+  border-color: var(--neon-yellow);
+}
+
+.unit-token.side-opponent {
+  border-color: var(--cartoon-red);
+}
+
+.unit-token.selected {
+  box-shadow: 0 0 0 3px var(--neon-green), 0 0 10px var(--neon-yellow);
+  transform: scale(1.05);
+}
+
+/* Species colored token bases (§11) */
+.species-Skeleton {
+  background: linear-gradient(180deg, #544e47 0%, #2b2723 100%);
+}
+.species-Orc {
+  background: linear-gradient(180deg, #2e6b22 0%, #173b10 100%);
+}
+.species-Robot {
+  background: linear-gradient(180deg, #3c5466 0%, #1d2b36 100%);
+}
+.species-Alien {
+  background: linear-gradient(180deg, #006978 0%, #00363d 100%);
+}
+.species-Zombie {
+  background: linear-gradient(180deg, #556b1f 0%, #2a360d 100%);
+}
+
+.token-top-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 9px;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.pos-badge {
+  background: #000;
+  color: var(--neon-yellow);
+  padding: 1px 3px;
+  border-radius: 3px;
+  font-size: 9px;
+  font-weight: 900;
+}
+
+.side-opponent .pos-badge {
+  color: #ff8a80;
+}
+
+.star-badge {
+  color: var(--neon-yellow);
+  font-size: 9px;
+  letter-spacing: -1px;
+}
+
+.token-avatar {
+  font-size: 16px;
+  line-height: 1;
+  position: relative;
+}
+
+.carrier-ball {
+  position: absolute;
+  right: -10px;
+  top: -3px;
+  font-size: 12px;
+  filter: drop-shadow(0 0 2px #000);
+}
+
+.token-name {
+  font-size: 9px;
+  font-weight: 800;
+  color: #fff;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  width: 100%;
+  line-height: 1.05;
+  text-shadow: 1px 1px 0 #000;
+}
+
+.token-hp-bar {
+  width: 94%;
+  height: 5px;
+  background: rgba(0, 0, 0, 0.7);
+  border-radius: 3px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+}
+
+.token-hp-fill {
+  height: 100%;
+  background: var(--neon-green);
+  transition: width 0.15s ease;
+}
+
+.side-opponent .token-hp-fill {
+  background: var(--cartoon-red);
+}
+
+/* Battle Animations (§11: Hop = move, Lunge = hit, Spin+Skull = death) */
+@keyframes animHop {
+  0% { transform: translateY(0) scale(1); }
+  50% { transform: translateY(-9px) scale(1.12); }
+  100% { transform: translateY(0) scale(1); }
+}
+
+@keyframes animLungePlayer {
+  0% { transform: translateY(0) scale(1); }
+  45% { transform: translateY(-12px) scale(1.16); box-shadow: 0 0 12px var(--neon-yellow); }
+  100% { transform: translateY(0) scale(1); }
+}
+
+@keyframes animLungeOpponent {
+  0% { transform: translateY(0) scale(1); }
+  45% { transform: translateY(12px) scale(1.16); box-shadow: 0 0 12px var(--cartoon-red); }
+  100% { transform: translateY(0) scale(1); }
+}
+
+@keyframes animHitFlash {
+  0%, 100% { filter: brightness(1); }
+  50% { filter: brightness(2.3) saturate(2); transform: scale(0.92); }
+}
+
+@keyframes animSpinDeath {
+  0% { transform: rotate(0deg) scale(1); opacity: 1; }
+  60% { transform: rotate(240deg) scale(1.2); opacity: 0.9; background: var(--cartoon-red); }
+  100% { transform: rotate(360deg) scale(0.2); opacity: 0; }
+}
+
+.unit-token.anim-hop {
+  animation: animHop 0.26s ease-out;
+}
+
+.unit-token.side-player.anim-lunge {
+  animation: animLungePlayer 0.26s ease-out;
+}
+
+.unit-token.side-opponent.anim-lunge {
+  animation: animLungeOpponent 0.26s ease-out;
+}
+
+.unit-token.anim-hit {
+  animation: animHitFlash 0.24s ease-out;
+}
+
+.unit-token.anim-death {
+  animation: animSpinDeath 0.35s ease-in forwards;
+}
+
+/* Side Yardage Thermometer (§4, §11) */
+#yard-thermometer {
+  flex: 0 0 42px;
+  background: #140824;
+  border: 2px solid var(--neon-yellow);
+  border-radius: 8px;
+  padding: 4px 3px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.thermo-label-top {
+  font-size: 9px;
+  font-weight: 900;
+  color: var(--neon-yellow);
+  text-align: center;
+  line-height: 1.05;
+}
+
+.thermo-track {
+  flex: 1 1 auto;
+  width: 16px;
+  margin: 4px 0;
+  background: #08030f;
+  border: 2px solid #6b3fa0;
+  border-radius: 9px;
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+
+.thermo-fill {
+  width: 100%;
+  height: 0%;
+  background: linear-gradient(180deg, var(--neon-yellow) 0%, var(--neon-green) 55%, #1faa00 100%);
+  transition: height 0.25s ease;
+}
+
+.thermo-fg-line {
+  position: absolute;
+  bottom: 62.5%; /* 50 / 80 = 62.5% */
+  left: 0;
+  right: 0;
+  border-top: 2px dashed #ff9100;
+  z-index: 2;
+}
+
+.thermo-fg-tag {
+  position: absolute;
+  bottom: 63%;
+  left: 1px;
+  font-size: 7px;
+  font-weight: 900;
+  color: #ff9100;
+  z-index: 3;
+  text-shadow: 0 0 2px #000;
+}
+
+.thermo-yards-readout {
+  font-size: 11px;
+  font-weight: 900;
+  color: var(--neon-green);
+  text-align: center;
+  line-height: 1.1;
+}
+
+/* 4. Commentary Ticker (~64px) */
+#commentary-ticker {
+  flex: 0 0 64px;
+  margin: 0 6px;
+  padding: 5px 8px;
+  background: #0c0417;
+  border: 2px solid var(--neon-green);
+  border-radius: 7px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.ticker-headline {
+  font-size: 12px;
+  font-weight: 900;
+  color: var(--neon-yellow);
+  line-height: 1.2;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.ticker-subline {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 2px;
+}
+
+/* 5. Bottom SNAP & Action Controls Bar (>=56px button requirement) */
+#action-bar {
+  flex: 0 0 68px;
+  padding: 5px 6px 6px;
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+}
+
+#snap-btn {
+  flex: 1 1 auto;
+  min-height: 56px;
+  height: 57px;
+  background: linear-gradient(180deg, #ffea00 0%, #ff9100 100%);
+  color: #1a062b;
+  border: 3px solid #ffffff;
+  border-radius: 10px;
+  font-size: 18px;
+  font-weight: 900;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  cursor: pointer;
+  box-shadow: 0 3px 0 #8c4f00, 0 0 12px rgba(255, 230, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+#snap-btn:disabled {
+  background: #49385c;
+  color: #9e8cb3;
+  border-color: #705c85;
+  box-shadow: none;
+  cursor: not-allowed;
+}
+
+#snap-btn:not(:disabled):active {
+  transform: translateY(2px);
+}
+
+#speed-btn {
+  flex: 0 0 64px;
+  min-height: 56px;
+  height: 57px;
+  background: #281242;
+  color: var(--neon-green);
+  border: 2px solid var(--neon-green);
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+/* Scrollable Modal Panels (Shop, Game Result, Graveyard) — May scroll per Spec §11 */
+.modal-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  background: rgba(11, 4, 20, 0.96);
+  display: flex;
+  flex-direction: column;
+  padding: 10px;
+  overflow-y: auto;
+}
+
+.modal-overlay.hidden {
+  display: none !important;
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 3px solid var(--neon-yellow);
+  padding-bottom: 6px;
+  margin-bottom: 8px;
+}
+
+.modal-title {
+  font-size: 18px;
+  font-weight: 900;
+  color: var(--neon-yellow);
+  letter-spacing: 0.6px;
+}
+
+.combine-banner {
+  background: linear-gradient(90deg, #ff9100, #ffea00);
+  color: #160526;
+  font-weight: 900;
+  font-size: 12px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  margin-bottom: 8px;
+  text-align: center;
+  border: 2px solid #fff;
+}
+
+.shop-Section-title {
+  font-size: 12px;
+  font-weight: 900;
+  color: var(--neon-green);
+  text-transform: uppercase;
+  margin: 6px 0 4px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.shop-cards-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.shop-card {
+  background: #210e38;
+  border: 2px solid #673ab7;
+  border-radius: 8px;
+  padding: 6px 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.shop-card.sold {
+  opacity: 0.4;
+}
+
+.shop-card-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.shop-card-name {
+  font-size: 13px;
+  font-weight: 900;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.shop-card-stats {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-weight: 700;
+}
+
+.shop-buy-btn {
+  background: var(--neon-green);
+  color: #0b1f00;
+  border: 2px solid #fff;
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 900;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.shop-buy-btn:disabled {
+  background: #423354;
+  color: #88789c;
+  border-color: #5e4b73;
+  cursor: not-allowed;
+}
+
+.shop-roster-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-top: 4px;
+}
+
+.roster-row-item {
+  background: #1a0b2e;
+  border: 1px solid #522d80;
+  border-radius: 6px;
+  padding: 5px 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+}
+
+.sell-btn {
+  background: var(--cartoon-red);
+  color: #fff;
+  border: 1px solid #fff;
+  border-radius: 5px;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.primary-modal-btn {
+  margin-top: 10px;
+  width: 100%;
+  min-height: 52px;
+  background: linear-gradient(180deg, var(--neon-green) 0%, #2eb800 100%);
+  color: #0a1c00;
+  border: 3px solid #fff;
+  border-radius: 10px;
+  font-size: 16px;
+  font-weight: 900;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+/* Graveyard Tombstone Cards (§11) */
+.tombstone-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 8px;
+  margin: 8px 0;
+}
+
+.tombstone-card {
+  background: linear-gradient(180deg, #4f4b57 0%, #2a2730 100%);
+  border: 3px solid #9e97ab;
+  border-top-left-radius: 42px;
+  border-top-right-radius: 42px;
+  border-bottom-left-radius: 6px;
+  border-bottom-right-radius: 6px;
+  padding: 12px 8px 8px;
+  text-align: center;
+  box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.25), 0 4px 8px rgba(0, 0, 0, 0.6);
+}
+
+.tombstone-rip {
+  font-size: 11px;
+  font-weight: 900;
+  color: #d6cfe3;
+  letter-spacing: 1.5px;
+}
+
+.tombstone-name {
+  font-size: 13px;
+  font-weight: 900;
+  color: var(--neon-yellow);
+  margin: 3px 0;
+}
+
+.tombstone-meta {
+  font-size: 11px;
+  font-weight: 800;
+  color: #fff;
+  margin-bottom: 4px;
+}
+
+.tombstone-epitaph {
+  font-size: 11px;
+  font-style: italic;
+  color: #ff9e9e;
+  line-height: 1.25;
+  background: rgba(0, 0, 0, 0.35);
+  padding: 4px;
+  border-radius: 4px;
+}
+
+.result-summary-card {
+  background: #1d0c33;
+  border: 2px solid var(--neon-yellow);
+  border-radius: 8px;
+  padding: 10px;
+  margin-bottom: 8px;
+  text-align: center;
+}
